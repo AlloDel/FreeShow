@@ -32,11 +32,12 @@ Models are managed by `modelManager.ts` and stored under:
 (e.g. `~/Library/Application Support/FreeShow/stt-models/zipformer-en-int8/` on macOS). They are
 **never committed to the repo** and are fetched at runtime from Hugging Face on first use.
 
-The only model currently defined is:
+The models currently defined are:
 
-| id                  | description                                                                            | size   |
-| ------------------- | -------------------------------------------------------------------------------------- | ------ |
-| `zipformer-en-int8` | Streaming English zipformer transducer, int8 quantized encoder/joiner for low CPU load | ~73 MB |
+| id                  | description                                                                             | size    |
+| ------------------- | --------------------------------------------------------------------------------------- | ------- |
+| `zipformer-en-int8` | Streaming English zipformer transducer, int8 quantized encoder/joiner for low CPU load  | ~73 MB  |
+| `nemotron-en-int8`  | NVIDIA Nemotron 0.6B streaming transducer (int8), best accuracy, casing and punctuation | ~662 MB |
 
 A model is considered "downloaded" only when all four of its files (`encoder`, `decoder`,
 `joiner`, `tokens`) exist and are non-empty; `getModelPaths()` returns `null` otherwise, and
