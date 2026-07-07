@@ -74,6 +74,9 @@ function startStt(payload: SttStartPayload): void {
     try {
         engine = new SttEngine()
         engine.on("transcript", (event: TranscriptEvent) => {
+            // Terminal visibility while tuning recognition quality
+            if (event.type === "partial") console.log(`[STT] ~ ${event.transcript}`)
+            else if (event.type === "final") console.log(`[STT] FINAL: "${event.transcript}"`)
             sendToApp("TRANSCRIPT", event)
             // If the engine reported an error/disconnect and is no longer running, clear the
             // module-level reference so status reports (e.g. modelLoaded) reflect reality.
