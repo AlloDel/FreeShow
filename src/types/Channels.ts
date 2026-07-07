@@ -13,8 +13,9 @@ export const CLOUD = "CLOUD"
 export const NDI = "NDI"
 export const BLACKMAGIC = "BLACKMAGIC"
 export const AUDIO = "AUDIO"
+export const STT = "STT" // STT: dedicated channel for Speech-to-Text backend/frontend IPC
 
-export type ValidChannels = "STARTUP" | "MAIN" | "OUTPUT" | "EXPORT" | "REMOTE" | "STAGE" | "CONTROLLER" | "OUTPUT_STREAM" | "CLOUD" | "NDI" | "BLACKMAGIC" | "AUDIO"
+export type ValidChannels = "STARTUP" | "MAIN" | "OUTPUT" | "EXPORT" | "REMOTE" | "STAGE" | "CONTROLLER" | "OUTPUT_STREAM" | "CLOUD" | "NDI" | "BLACKMAGIC" | "AUDIO" | "STT"
 
 export type Data = string | DataObject
 export interface DataObject {

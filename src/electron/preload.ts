@@ -13,7 +13,8 @@ import type { ValidChannels } from "../types/Channels"
 let appLoaded = false
 const LOG_MESSAGES: boolean = process.env.NODE_ENV !== "production"
 const filteredChannelsData: string[] = ["AUDIO_MAIN", "VISUALIZER_DATA", "STREAM", "BUFFER", "REQUEST_STREAM", "MAIN_TIME", "MAIN_SLIDE_VIDEO", "GET_THUMBNAIL", "ACTIVE_TIMERS", "RECEIVE_STREAM", "CHECK_RAM_USAGE", "TIMECODE_VALUE", "TIMECODE_AUDIO_DATA", "SPOTIFY_GET_STATE"]
-const filteredChannels: ValidChannels[] = ["AUDIO"]
+// STT: filtered to prevent the flood of STT audio chunk IPC logs from freezing the DevTools console
+const filteredChannels: ValidChannels[] = ["AUDIO", "STT"]
 
 const storedReceivers: { [key: string]: (e: IpcRendererEvent, args: any) => void } = {}
 
