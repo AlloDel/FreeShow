@@ -152,6 +152,7 @@
         "pcm-convert": "^1.6.5",
         "protobufjs": "^7.5.3",
         "pusher-js": "^8.5.0",
+        "sherpa-onnx-node": "^1.13.4",
         "slideshow": "github:vassbo/slideshow#224d50f",
         "socket.io": "^4.8.1",
         "uid": "^2.0.2",
