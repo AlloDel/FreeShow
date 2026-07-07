@@ -34,8 +34,8 @@ Models are managed by `modelManager.ts` and stored under:
 
 The only model currently defined is:
 
-| id | description | size |
-|---|---|---|
+| id                  | description                                                                            | size   |
+| ------------------- | -------------------------------------------------------------------------------------- | ------ |
 | `zipformer-en-int8` | Streaming English zipformer transducer, int8 quantized encoder/joiner for low CPU load | ~73 MB |
 
 A model is considered "downloaded" only when all four of its files (`encoder`, `decoder`,
@@ -49,25 +49,25 @@ the same `{ channel, data }` envelope pattern as `receiveAudio.ts`. `receiveStt.
 
 **Frontend → Electron** (`channel` values sent as `data` payload varies per channel):
 
-| Channel | Payload | Effect |
-|---|---|---|
-| `START` | `{ modelId? }` | Creates a `SttEngine`, loads the (already-downloaded) model, starts streaming recognition |
-| `STOP` | — | Stops and tears down the engine |
-| `AUDIO_DATA` | `Int16Array` / `Float32Array` / typed-array-like PCM | Fed into the running engine (converted to Float32 if needed) |
-| `GET_STATUS` | — | Requests a `STATUS` reply |
-| `DOWNLOAD_MODEL` | `{ modelId }` | Downloads all files for a model, reporting progress |
-| `DELETE_MODEL` | `modelId` (string) | Deletes a model's directory from disk |
-| `SET_MODEL` | `{ modelId }` | Switches the active model (only if already downloaded) |
-| `GET_MODELS` | — | Requests a `MODELS_LIST` reply |
+| Channel          | Payload                                              | Effect                                                                                    |
+| ---------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `START`          | `{ modelId? }`                                       | Creates a `SttEngine`, loads the (already-downloaded) model, starts streaming recognition |
+| `STOP`           | —                                                    | Stops and tears down the engine                                                           |
+| `AUDIO_DATA`     | `Int16Array` / `Float32Array` / typed-array-like PCM | Fed into the running engine (converted to Float32 if needed)                              |
+| `GET_STATUS`     | —                                                    | Requests a `STATUS` reply                                                                 |
+| `DOWNLOAD_MODEL` | `{ modelId }`                                        | Downloads all files for a model, reporting progress                                       |
+| `DELETE_MODEL`   | `modelId` (string)                                   | Deletes a model's directory from disk                                                     |
+| `SET_MODEL`      | `{ modelId }`                                        | Switches the active model (only if already downloaded)                                    |
+| `GET_MODELS`     | —                                                    | Requests a `MODELS_LIST` reply                                                            |
 
 **Electron → Frontend** (sent via `toApp("STT", { channel, data })`):
 
-| Channel | Payload | Meaning |
-|---|---|---|
-| `TRANSCRIPT` | `TranscriptEvent` (`partial` \| `final` \| `connected` \| `disconnected` \| `error`) | Streaming recognition output/lifecycle |
-| `STATUS` | `{ enabled, connected, modelLoaded, modelName, isDownloading, downloadProgress, downloadTotal }` | Current engine/model status |
-| `DOWNLOAD_PROGRESS` | `{ modelId, downloaded, total }` | Bytes downloaded so far for an in-progress model download |
-| `MODELS_LIST` | `ModelInfo[]` | All known models with `downloaded`/`active` flags |
+| Channel             | Payload                                                                                          | Meaning                                                   |
+| ------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------- |
+| `TRANSCRIPT`        | `TranscriptEvent` (`partial` \| `final` \| `connected` \| `disconnected` \| `error`)             | Streaming recognition output/lifecycle                    |
+| `STATUS`            | `{ enabled, connected, modelLoaded, modelName, isDownloading, downloadProgress, downloadTotal }` | Current engine/model status                               |
+| `DOWNLOAD_PROGRESS` | `{ modelId, downloaded, total }`                                                                 | Bytes downloaded so far for an in-progress model download |
+| `MODELS_LIST`       | `ModelInfo[]`                                                                                    | All known models with `downloaded`/`active` flags         |
 
 ## Files
 
