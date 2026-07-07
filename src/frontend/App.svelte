@@ -22,6 +22,8 @@
     import { focusArea, logerror, mainClick, toggleRemoteStream } from "./utils/common"
     import { keydown } from "./utils/shortcuts"
     import { startup } from "./utils/startup"
+    import SttOverlay from "./stt/SttOverlay.svelte"
+    import { sttOverlayVisible } from "./stt/sttStore"
 
     startup()
 
@@ -88,6 +90,11 @@
             <Recorder />
             <Guide />
             <ProgressPanel />
+
+            <!-- STT: draggable Speech-to-Text overlay, toggled from the Top menu -->
+            {#if $sttOverlayVisible}
+                <SttOverlay />
+            {/if}
 
             <MainLayout />
 
