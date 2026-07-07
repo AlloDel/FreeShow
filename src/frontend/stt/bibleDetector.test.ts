@@ -55,6 +55,21 @@ describe("BibleDetector", () => {
             expect(detections[0]).toMatchObject({ bookName: "John", chapter: 3, verseStart: 16 })
             expect(detections[1]).toMatchObject({ bookName: "John", chapter: 1, verseStart: 1 })
         })
+
+        // Overlapping numbered-book duplicate: bare "john" also matches inside "first john",
+        // which produced a spurious John detection alongside the correct 1 John one.
+        it("returns exactly one detection for a numbered book (First John 2:1)", () => {
+            const detections = detector.processTranscript("First John 2:1")
+            expect(detections).toHaveLength(1)
+            expect(detections[0]).toMatchObject({ bookName: "1 John", chapter: 2, verseStart: 1 })
+        })
+
+        it("keeps distinct books when one name overlaps another elsewhere in the utterance", () => {
+            const detections = detector.processTranscript("John 3:16 and First John 2:1")
+            expect(detections).toHaveLength(2)
+            expect(detections[0]).toMatchObject({ bookName: "John", chapter: 3, verseStart: 16 })
+            expect(detections[1]).toMatchObject({ bookName: "1 John", chapter: 2, verseStart: 1 })
+        })
     })
 
     describe("chapter-only context", () => {

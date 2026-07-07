@@ -205,7 +205,12 @@ export class BibleDetector {
             }
         }
 
-        return matches.sort((a, b) => a.start - b.start)
+        // Suppress matches fully contained within a longer match ("john" inside
+        // "first john") — each book scans independently, so a numbered book's
+        // spoken variant can also trigger a spurious match for the bare book name.
+        const filtered = matches.filter((match) => !matches.some((other) => other !== match && other.start <= match.start && match.end <= other.end && other.end - other.start > match.end - match.start))
+
+        return filtered.sort((a, b) => a.start - b.start)
     }
 
     private parseReference(text: string, match: BookMatch): { chapter: number; verseStart: number; verseEnd?: number } | null {
