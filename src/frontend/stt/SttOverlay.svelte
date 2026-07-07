@@ -148,10 +148,8 @@
 
             <!-- RESULTS AREA -->
             <section class="stt-section results-section">
-                <div class="stt-tabs-header">
-                    <span class="stt-tab-btn active">
-                        Bible <span class="stt-badge">{$sttDetections.length}</span>
-                    </span>
+                <div class="stt-section-title-row">
+                    <span class="stt-section-title">Bible <span class="stt-badge">{$sttDetections.length}</span></span>
                 </div>
 
                 <div class="stt-results-container">
@@ -216,37 +214,20 @@
 </div>
 
 <style>
-    /* VARIABLES & RESET */
+    /* PANEL */
     .stt-overlay-container {
-        --overlay-bg: rgba(24, 31, 40, 0.74);
-        --overlay-header: rgba(12, 17, 24, 0.74);
-        --overlay-border: rgba(255, 255, 255, 0.08);
-        --overlay-highlight: rgba(255, 255, 255, 0.1);
-        --text-main: #f1f5f9;
-        --text-sub: #94a3b8;
-        --accent-blue: #fbbf24;
-        --accent-blue-hover: #f59e0b;
-        --accent-red: #ef4444;
-        --accent-red-hover: #dc2626;
-        --accent-green: #10b981;
-        --accent-green-hover: #059669;
-
         position: fixed;
         z-index: 10000;
         width: clamp(320px, 28vw, 388px);
         min-width: 320px;
         max-width: min(calc(100vw - 24px), 388px);
         max-height: min(calc(100vh - 24px), 58vh);
-        background: radial-gradient(circle at top left, rgba(251, 191, 36, 0.08), transparent 28%), linear-gradient(180deg, rgba(35, 42, 52, 0.78) 0%, rgba(14, 18, 25, 0.88) 100%);
-        border: 1px solid var(--overlay-border);
+        background-color: var(--primary-darker);
+        border: 1px solid var(--primary-lighter);
         border-radius: 18px;
-        box-shadow:
-            0 18px 48px rgba(2, 6, 23, 0.42),
-            inset 0 1px 0 var(--overlay-highlight);
-        backdrop-filter: blur(20px) saturate(145%);
-        -webkit-backdrop-filter: blur(20px) saturate(145%);
-        color: var(--text-main);
-        font-family: inherit;
+        box-shadow: 0 18px 48px rgba(0, 0, 0, 0.42);
+        color: var(--text);
+        font-family: var(--font-family);
         display: flex;
         flex-direction: column;
         overflow: hidden;
@@ -266,13 +247,11 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
-        background: linear-gradient(180deg, rgba(10, 14, 19, 0.62), rgba(10, 14, 19, 0.2));
+        background-color: var(--primary-darkest);
         padding: 12px 14px;
         cursor: grab;
         user-select: none;
-        border-bottom: 1px solid var(--overlay-border);
-        backdrop-filter: blur(18px);
-        -webkit-backdrop-filter: blur(18px);
+        border-bottom: 1px solid var(--primary-lighter);
     }
     .stt-overlay-header:active {
         cursor: grabbing;
@@ -288,22 +267,24 @@
         width: 10px;
         height: 10px;
         border-radius: 50%;
-        background-color: var(--text-sub);
+        background-color: var(--text);
+        opacity: 0.7;
         box-shadow: 0 0 5px rgba(0, 0, 0, 0.5);
     }
     .stt-status-dot.active {
-        background-color: var(--accent-red);
+        background-color: var(--disconnected);
+        opacity: 1;
         animation: pulse 2s infinite;
     }
     @keyframes pulse {
         0% {
-            box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+            box-shadow: 0 0 0 0 rgba(168, 39, 39, 0.4);
         }
         70% {
-            box-shadow: 0 0 0 6px rgba(239, 68, 68, 0);
+            box-shadow: 0 0 0 6px rgba(168, 39, 39, 0);
         }
         100% {
-            box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+            box-shadow: 0 0 0 0 rgba(168, 39, 39, 0);
         }
     }
 
@@ -318,7 +299,8 @@
     }
     .stt-subtitle {
         font-size: 11px;
-        color: var(--text-sub);
+        color: var(--text);
+        opacity: 0.7;
         text-transform: uppercase;
         letter-spacing: 0.05em;
     }
@@ -330,7 +312,8 @@
     .stt-btn-icon {
         background: transparent;
         border: none;
-        color: var(--text-sub);
+        color: var(--text);
+        opacity: 0.7;
         cursor: pointer;
         padding: 4px;
         border-radius: 4px;
@@ -343,17 +326,23 @@
             color 0.2s;
     }
     .stt-btn-icon:hover {
-        background: rgba(255, 255, 255, 0.1);
-        color: var(--text-main);
+        background: var(--hover);
+        color: var(--text);
+        opacity: 1;
+    }
+    .stt-btn-icon:focus-visible {
+        background: var(--focus);
+        opacity: 1;
     }
     .stt-btn-icon.close-btn:hover {
-        background: rgba(239, 68, 68, 0.2);
-        color: var(--accent-red);
+        background: var(--disconnected);
+        color: var(--text);
+        opacity: 1;
     }
 
     .stt-btn-header-action {
-        background: var(--accent-blue);
-        color: #22150a;
+        background: var(--secondary);
+        color: var(--secondary-text);
         border: none;
         padding: 5px 11px;
         border-radius: 999px;
@@ -369,16 +358,16 @@
         letter-spacing: 0.05em;
     }
     .stt-btn-header-action:hover:not(:disabled) {
-        background: var(--accent-blue-hover);
+        background: var(--secondary-opacity);
         transform: translateY(-1px);
     }
     .stt-btn-header-action.active {
-        background: rgba(239, 68, 68, 0.2);
-        color: var(--accent-red);
-        border: 1px solid rgba(239, 68, 68, 0.4);
+        background: transparent;
+        color: var(--disconnected);
+        border: 1px solid var(--disconnected);
     }
     .stt-btn-header-action.active:hover {
-        background: rgba(239, 68, 68, 0.3);
+        background: var(--hover);
     }
     .stt-btn-header-action:disabled {
         opacity: 0.5;
@@ -397,7 +386,7 @@
 
     .stt-section {
         padding: 8px 14px;
-        border-bottom: 1px solid var(--overlay-border);
+        border-bottom: 1px solid var(--primary-lighter);
         display: flex;
         flex-direction: column;
         gap: 8px;
@@ -413,21 +402,21 @@
         align-items: center;
         justify-content: space-between;
         font-size: 12px;
-        border-bottom: 1px solid var(--overlay-border);
+        border-bottom: 1px solid var(--primary-lighter);
     }
     .stt-notification.error {
-        background: rgba(239, 68, 68, 0.15);
-        color: #fca5a5;
+        background: var(--disconnected);
+        color: var(--text);
     }
     .stt-notification.info {
         flex-direction: column;
         align-items: stretch;
         gap: 6px;
-        background: rgba(59, 130, 246, 0.1);
+        background: var(--primary-lighter);
     }
     .stt-progress-container {
         height: 4px;
-        background: rgba(255, 255, 255, 0.1);
+        background: var(--hover);
         border-radius: 2px;
         overflow: hidden;
     }
@@ -436,19 +425,20 @@
     }
     .stt-progress-bar {
         height: 100%;
-        background: var(--accent-blue);
+        background: var(--secondary);
         transition: width 0.3s;
     }
     .stt-progress-text {
         font-size: 11px;
-        color: var(--text-sub);
+        color: var(--text);
+        opacity: 0.7;
         text-align: right;
     }
 
     /* TRANSCRIPT */
     .stt-transcript-box {
-        background: linear-gradient(180deg, rgba(7, 10, 15, 0.34), rgba(7, 10, 15, 0.2));
-        border: 1px solid var(--overlay-border);
+        background-color: var(--primary);
+        border: 1px solid var(--primary-lighter);
         border-radius: 14px;
         padding: 12px;
         min-height: 64px;
@@ -460,7 +450,7 @@
         margin: 0;
         font-size: 13px;
         line-height: 1.5;
-        color: var(--text-main);
+        color: var(--text);
         word-wrap: break-word;
         overflow-wrap: break-word;
         white-space: pre-wrap;
@@ -469,7 +459,8 @@
         margin: 0;
         font-size: 13px;
         line-height: 1.5;
-        color: var(--text-sub);
+        color: var(--text);
+        opacity: 0.7;
         font-style: italic;
         text-align: center;
         margin-top: 10px;
@@ -482,43 +473,27 @@
         flex: 1;
         min-height: 0;
     }
-    .stt-tabs-header {
-        display: flex;
-        border-bottom: 1px solid var(--overlay-border);
-        background: rgba(10, 14, 19, 0.26);
-        position: relative;
-    }
-    .stt-tab-btn {
-        flex: 1;
-        background: transparent;
-        border: none;
-        padding: 12px;
-        font-size: 13px;
-        font-weight: 600;
-        color: var(--text-sub);
-        cursor: pointer;
-        border-bottom: 2px solid transparent;
+    .stt-section-title-row {
         display: flex;
         align-items: center;
-        justify-content: center;
-        gap: 6px;
-        transition: all 0.2s;
+        padding: 10px 2px;
+        border-bottom: 1px solid var(--primary-lighter);
     }
-    .stt-tab-btn.active {
-        color: var(--text-main);
-        border-bottom-color: var(--accent-blue);
-        background: rgba(255, 255, 255, 0.04);
+    .stt-section-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text);
+        display: flex;
+        align-items: center;
+        gap: 6px;
     }
 
     .stt-badge {
-        background: rgba(255, 255, 255, 0.1);
+        background: var(--secondary);
+        color: var(--secondary-text);
         padding: 2px 6px;
         border-radius: 12px;
         font-size: 10px;
-    }
-    .stt-tab-btn.active .stt-badge {
-        background: var(--accent-blue);
-        color: white;
     }
 
     .stt-results-container {
@@ -534,7 +509,8 @@
     }
     .stt-empty-state {
         text-align: center;
-        color: var(--text-sub);
+        color: var(--text);
+        opacity: 0.7;
         font-size: 12px;
         padding: 20px 0;
     }
@@ -545,14 +521,13 @@
         gap: 10px;
     }
     .stt-list-item {
-        background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.025));
-        border: 1px solid var(--overlay-border);
+        background-color: var(--primary);
+        border: 1px solid var(--primary-lighter);
         border-radius: 14px;
         padding: 13px;
         display: flex;
         flex-direction: column;
         gap: 8px;
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
     }
     .stt-item-header {
         display: flex;
@@ -561,20 +536,21 @@
     }
     .stt-item-title {
         font-size: 13px;
-        color: var(--text-main);
+        color: var(--text);
         word-break: break-word;
     }
     .stt-item-conf {
         font-size: 11px;
-        color: #f59e0b; /* Amber */
-        background: rgba(245, 158, 11, 0.1);
+        color: var(--secondary);
+        background: var(--secondary-opacity);
         padding: 2px 6px;
         border-radius: 4px;
     }
     .stt-item-desc {
         margin: 0;
         font-size: 11px;
-        color: var(--text-sub);
+        color: var(--text);
+        opacity: 0.7;
         line-height: 1.4;
     }
     .stt-item-actions {
@@ -585,8 +561,8 @@
     }
 
     .stt-btn-secondary {
-        background: rgba(59, 130, 246, 0.2);
-        color: #93c5fd;
+        background: var(--secondary-opacity);
+        color: var(--text);
         border: none;
         padding: 6px 12px;
         border-radius: 4px;
@@ -596,22 +572,24 @@
         transition: background 0.2s;
     }
     .stt-btn-secondary:hover {
-        background: rgba(59, 130, 246, 0.3);
+        background: var(--secondary);
     }
     .stt-btn-secondary.outline {
         background: transparent;
-        border: 1px solid var(--overlay-border);
-        color: var(--text-sub);
+        border: 1px solid var(--primary-lighter);
+        color: var(--text);
+        opacity: 0.7;
     }
     .stt-btn-secondary.outline:hover {
-        background: rgba(255, 255, 255, 0.1);
-        color: var(--text-main);
+        background: var(--hover);
+        color: var(--text);
+        opacity: 1;
     }
     /* DEV PANEL */
     .stt-dev-panel {
-        background: rgba(0, 0, 0, 0.4);
+        background-color: var(--primary-darkest);
         padding: 12px 14px;
-        border-top: 1px solid var(--overlay-border);
+        border-top: 1px solid var(--primary-lighter);
         display: flex;
         flex-direction: column;
         gap: 10px;
@@ -624,13 +602,13 @@
     .stt-dev-title {
         font-size: 11px;
         font-weight: 700;
-        color: #fbbf24; /* Amber */
+        color: var(--secondary);
         text-transform: uppercase;
         letter-spacing: 0.05em;
     }
     .stt-btn-success {
-        background: rgba(16, 185, 129, 0.2);
-        color: #6ee7b7;
+        background: var(--connected);
+        color: var(--text);
         border: none;
         padding: 4px 10px;
         border-radius: 4px;
@@ -639,12 +617,12 @@
         cursor: pointer;
     }
     .stt-btn-success:hover {
-        background: rgba(16, 185, 129, 0.3);
+        filter: brightness(1.15);
     }
 
     .stt-btn-danger {
-        background: rgba(239, 68, 68, 0.2);
-        color: #fca5a5;
+        background: var(--disconnected);
+        color: var(--text);
         border: none;
         padding: 4px 10px;
         border-radius: 4px;
@@ -653,14 +631,14 @@
         cursor: pointer;
     }
     .stt-btn-danger:hover {
-        background: rgba(239, 68, 68, 0.3);
+        filter: brightness(1.15);
     }
 
     .stt-dev-select {
         width: 100%;
-        background: rgba(255, 255, 255, 0.05);
-        color: var(--text-main);
-        border: 1px solid var(--overlay-border);
+        background: var(--primary);
+        color: var(--text);
+        border: 1px solid var(--primary-lighter);
         border-radius: 6px;
         padding: 6px 8px;
         font-size: 12px;
@@ -668,7 +646,7 @@
         cursor: pointer;
     }
     .stt-dev-select:focus {
-        outline: 1px solid rgba(251, 191, 36, 0.5);
+        outline: 1px solid var(--secondary);
     }
     .stt-dev-progress {
         display: flex;
@@ -677,7 +655,8 @@
     }
     .stt-dev-progress-text {
         font-size: 11px;
-        color: var(--text-sub);
+        color: var(--text);
+        opacity: 0.7;
         text-align: right;
     }
 </style>

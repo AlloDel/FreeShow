@@ -139,6 +139,7 @@
         display: flex;
         flex-direction: column;
         gap: 8px;
+        font-family: var(--font-family);
     }
 
     .stt-setting-row {
@@ -152,7 +153,7 @@
         flex-direction: column;
         align-items: stretch;
         gap: 8px;
-        background: rgba(0, 0, 0, 0.2);
+        background-color: var(--primary-darker);
         padding: 12px;
         border-radius: 8px;
     }
@@ -162,9 +163,9 @@
         text-transform: uppercase;
         letter-spacing: 0.05em;
         font-size: 10px;
-        color: #6366f1;
+        color: var(--secondary);
         margin-top: 10px;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        border-bottom: 1px solid var(--primary-lighter);
         padding-bottom: 4px;
     }
 
@@ -176,19 +177,19 @@
 
     .stt-setting-label {
         font-size: 11px;
-        color: var(--text, #e2e8f0);
+        color: var(--text);
         opacity: 0.8;
         white-space: nowrap;
     }
 
     .stt-setting-label.model-label {
-        color: #fbbf24;
+        color: var(--secondary);
         opacity: 1;
     }
 
     .stt-model-status {
         font-size: 11px;
-        color: #6ee7b7;
+        color: var(--connected);
         opacity: 0.9;
     }
 
@@ -197,15 +198,15 @@
         min-width: 0;
         padding: 4px 6px;
         font-size: 11px;
-        background: rgba(255, 255, 255, 0.06);
-        border: 1px solid rgba(255, 255, 255, 0.1);
+        background-color: var(--primary);
+        border: 1px solid var(--primary-lighter);
         border-radius: 6px;
-        color: var(--text, #e2e8f0);
+        color: var(--text);
         cursor: pointer;
         font-family: inherit;
     }
     .stt-select:focus {
-        outline: 1px solid rgba(99, 102, 241, 0.5);
+        outline: 1px solid var(--secondary);
     }
 
     .stt-slider-container {
@@ -219,7 +220,7 @@
         height: 4px;
         -webkit-appearance: none;
         appearance: none;
-        background: rgba(255, 255, 255, 0.1);
+        background: var(--hover);
         border-radius: 2px;
         outline: none;
     }
@@ -229,12 +230,13 @@
         width: 12px;
         height: 12px;
         border-radius: 50%;
-        background: #6366f1;
+        background: var(--secondary);
         cursor: pointer;
     }
     .stt-slider-value {
         font-size: 10px;
-        color: #888;
+        color: var(--text);
+        opacity: 0.7;
         min-width: 30px;
         text-align: right;
     }
@@ -243,8 +245,8 @@
         padding: 4px 12px;
         border: none;
         border-radius: 6px;
-        background: rgba(99, 102, 241, 0.2);
-        color: #818cf8;
+        background: var(--secondary-opacity);
+        color: var(--text);
         font-size: 11px;
         font-weight: 500;
         cursor: pointer;
@@ -252,14 +254,14 @@
         font-family: inherit;
     }
     .stt-btn-download:hover:not(:disabled) {
-        background: rgba(99, 102, 241, 0.3);
+        background: var(--secondary);
     }
     .stt-btn-download.danger {
-        background: #ef4444;
-        color: #fff;
+        background: var(--disconnected);
+        color: var(--text);
     }
     .stt-btn-download.danger:hover:not(:disabled) {
-        background: #dc2626;
+        filter: brightness(1.15);
     }
     .stt-btn-download:disabled {
         opacity: 0.5;
@@ -274,19 +276,20 @@
     }
     .stt-download-bar {
         height: 6px;
-        background: rgba(255, 255, 255, 0.1);
+        background: var(--hover);
         border-radius: 3px;
         overflow: hidden;
     }
     .stt-download-fill {
         height: 100%;
-        background: linear-gradient(90deg, #6366f1, #8b5cf6);
+        background: var(--secondary);
         transition: width 0.3s;
         border-radius: 3px;
     }
     .stt-download-text {
         font-size: 0.75rem;
-        color: #9ca3af;
+        color: var(--text);
+        opacity: 0.7;
         text-align: right;
     }
 </style>
