@@ -125,15 +125,24 @@ export async function downloadModel(modelId: string, onProgress?: (downloaded: n
     onProgress?.(def.size, def.size)
 }
 
+const MAX_REDIRECTS = 5
+
 function downloadFile(url: string, target: string, onProgress?: (downloaded: number) => void): Promise<void> {
     return new Promise((resolve, reject) => {
-        const doDownload = (downloadUrl: string) => {
+        const doDownload = (downloadUrl: string, redirectCount: number) => {
+            if (redirectCount > MAX_REDIRECTS) {
+                reject(new Error("Too many redirects"))
+                return
+            }
+
             https
                 .get(downloadUrl, { headers: { "User-Agent": "FreeShow-STT/1.0" } }, (response) => {
                     if (response.statusCode === 301 || response.statusCode === 302) {
                         const redirectUrl = response.headers.location
+                        // Drain the original socket before following the redirect
+                        response.resume()
                         if (redirectUrl) {
-                            doDownload(redirectUrl)
+                            doDownload(redirectUrl, redirectCount + 1)
                             return
                         }
                     }
@@ -167,6 +176,6 @@ function downloadFile(url: string, target: string, onProgress?: (downloaded: num
                 .on("error", reject)
         }
 
-        doDownload(url)
+        doDownload(url, 0)
     })
 }
