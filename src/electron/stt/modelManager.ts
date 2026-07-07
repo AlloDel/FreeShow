@@ -143,7 +143,13 @@ function downloadFile(url: string, target: string, onProgress?: (downloaded: num
                         // Drain the original socket before following the redirect
                         response.resume()
                         if (redirectUrl) {
-                            doDownload(redirectUrl, redirectCount + 1)
+                            try {
+                                // location may be relative ("/api/...") — resolve against the current URL
+                                doDownload(new URL(redirectUrl, downloadUrl).toString(), redirectCount + 1)
+                            } catch (err) {
+                                // a throw inside this response callback would otherwise escape the promise
+                                reject(err instanceof Error ? err : new Error(String(err)))
+                            }
                             return
                         }
                     }
