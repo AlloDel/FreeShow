@@ -48,7 +48,12 @@ export class BibleDetector {
         const cleaned = this.cleanTranscript(text)
 
         const previous = this.checkPreviousVerseCommand(cleaned)
-        if (previous) return [previous]
+        if (previous) {
+            // Re-firing the last detection means the speaker is still talking about it —
+            // refresh the context window so a subsequent bare verse mention still resolves.
+            this.setContext(previous, false)
+            return [previous]
+        }
 
         const direct = this.detectDirect(cleaned)
         if (direct.length) return direct
@@ -77,7 +82,14 @@ export class BibleDetector {
             // Chapter-only ("Genesis 3"): show verse 1 and keep the context warm
             if (ref.verseStart === 0) {
                 const alreadyActive = this.isContextLive() && this.context!.bookNumber === match.book.number && this.context!.chapter === ref.chapter
-                if (alreadyActive) continue
+                if (alreadyActive) {
+                    // Still suppress the duplicate detection, but a repeated mention means
+                    // the speaker is still on this chapter — refresh the context window so
+                    // a later verse-only mention doesn't fall outside the timeout.
+                    this.context!.setAt = Date.now()
+                    this.context!.allowBareVerse = true
+                    continue
+                }
 
                 const detection = this.makeDetection(match.book.number, match.book.name, ref.chapter, 1, undefined, 0.86, cleaned, "contextual")
                 this.setContext(detection, true)
@@ -152,7 +164,7 @@ export class BibleDetector {
             const regex = new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi")
             result = result.replace(regex, "")
         }
-        result = result.replace(/look at\s+(?=[A-Z])/gi, "")
+        result = result.replace(/[Ll]ook at\s+(?=[A-Z])/g, "")
         return result.replace(/\s+/g, " ").trim()
     }
 
@@ -160,21 +172,36 @@ export class BibleDetector {
         const lower = text.toLowerCase()
         const matches: BookMatch[] = []
 
+        // Note: abbreviations (e.g. "is", "am", "he") are intentionally excluded here —
+        // nobody speaks a book abbreviation aloud, and matching them against ordinary
+        // speech produces false positives. They remain in the data model for other
+        // consumers (e.g. buildBookLookup's display-name resolution).
         for (const book of BIBLE_BOOKS) {
-            const allNames = [book.name.toLowerCase(), ...book.abbreviations, ...book.spokenVariants.map((v) => v.toLowerCase())]
+            const allNames = [book.name.toLowerCase(), ...book.spokenVariants.map((v) => v.toLowerCase())]
             allNames.sort((a, b) => b.length - a.length)
 
             for (const name of allNames) {
-                const idx = lower.indexOf(name)
-                if (idx === -1) continue
+                let searchFrom = 0
+                let foundAny = false
 
-                const before = idx > 0 ? lower[idx - 1] : " "
-                const after = idx + name.length < lower.length ? lower[idx + name.length] : " "
-                if (/\w/.test(before) && before !== " ") continue
-                if (/\w/.test(after) && after !== " " && !/[:.,;!?]/.test(after) && !/\d/.test(after)) continue
+                while (true) {
+                    const idx = lower.indexOf(name, searchFrom)
+                    if (idx === -1) break
 
-                matches.push({ book, start: idx, end: idx + name.length })
-                break
+                    const before = idx > 0 ? lower[idx - 1] : " "
+                    const after = idx + name.length < lower.length ? lower[idx + name.length] : " "
+                    const validBefore = !(/\w/.test(before) && before !== " ")
+                    const validAfter = !(/\w/.test(after) && after !== " " && !/[:.,;!?]/.test(after) && !/\d/.test(after))
+
+                    if (validBefore && validAfter) {
+                        matches.push({ book, start: idx, end: idx + name.length })
+                        foundAny = true
+                    }
+
+                    searchFrom = idx + name.length
+                }
+
+                if (foundAny) break
             }
         }
 

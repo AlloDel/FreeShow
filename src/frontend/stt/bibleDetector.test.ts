@@ -47,6 +47,14 @@ describe("BibleDetector", () => {
         it("rejects chapters beyond the book's maximum", () => {
             expect(detector.processTranscript("Genesis 99:1")).toEqual([])
         })
+
+        // Finding 3: a second mention of the same book in one utterance must not be dropped.
+        it("detects two references to the same book in one utterance", () => {
+            const detections = detector.processTranscript("John 3:16 and also John 1:1")
+            expect(detections).toHaveLength(2)
+            expect(detections[0]).toMatchObject({ bookName: "John", chapter: 3, verseStart: 16 })
+            expect(detections[1]).toMatchObject({ bookName: "John", chapter: 1, verseStart: 1 })
+        })
     })
 
     describe("chapter-only context", () => {
@@ -81,6 +89,17 @@ describe("BibleDetector", () => {
             detector.processTranscript("Genesis 3")
             vi.advanceTimersByTime(61_000)
             expect(detector.processTranscript("verse 15")).toEqual([])
+        })
+
+        // Finding 2: a repeated chapter-only mention should refresh the context timer,
+        // not just get suppressed while the old timestamp keeps ticking toward expiry.
+        it("refreshes the context timer on a repeated chapter-only mention", () => {
+            detector.processTranscript("Genesis 3")
+            vi.advanceTimersByTime(50_000)
+            expect(detector.processTranscript("Genesis 3")).toEqual([])
+            vi.advanceTimersByTime(20_000)
+            const [d] = detector.processTranscript("verse 15")
+            expect(d).toMatchObject({ bookName: "Genesis", chapter: 3, verseStart: 15, source: "contextual" })
         })
     })
 
@@ -119,6 +138,18 @@ describe("BibleDetector", () => {
         it("does nothing without history", () => {
             expect(detector.processTranscript("that verse again")).toEqual([])
         })
+
+        // Finding 5: re-firing the last detection via "that verse again" should also
+        // refresh the context window so a subsequent bare verse mention still resolves.
+        it("refreshes the context window when re-firing via 'that verse again'", () => {
+            detector.processTranscript("John 3:16")
+            vi.advanceTimersByTime(50_000)
+            const [again] = detector.processTranscript("that verse again")
+            expect(again).toMatchObject({ bookName: "John", chapter: 3, verseStart: 16 })
+            vi.advanceTimersByTime(30_000)
+            const [d] = detector.processTranscript("verse 17")
+            expect(d).toMatchObject({ bookName: "John", chapter: 3, verseStart: 17 })
+        })
     })
 
     describe("negatives", () => {
@@ -136,6 +167,25 @@ describe("BibleDetector", () => {
 
         it("returns empty for empty input", () => {
             expect(detector.processTranscript("")).toEqual([])
+        })
+
+        // Finding 1: spoken transcripts never say book abbreviations like "is", "am", "he" —
+        // matching them causes false-positive detections on ordinary speech.
+        it("does not fire on 'is' (Isaiah abbreviation) in ordinary speech", () => {
+            expect(detector.processTranscript("there is 3 people who need prayer today")).toEqual([])
+        })
+
+        it("does not fire on 'am' (Amos abbreviation) in ordinary speech", () => {
+            expect(detector.processTranscript("I am 3 minutes late")).toEqual([])
+        })
+
+        it("does not fire on 'he' (Hebrews abbreviation) in ordinary speech", () => {
+            expect(detector.processTranscript("he 12 times said that")).toEqual([])
+        })
+
+        it("still detects a full book name reference (Isaiah 53:5)", () => {
+            const [d] = detector.processTranscript("Isaiah 53:5")
+            expect(d).toMatchObject({ bookName: "Isaiah", chapter: 53, verseStart: 5 })
         })
     })
 
