@@ -58,70 +58,89 @@ export async function startStt(): Promise<void> {
     }
 
     // Set up audio processing (16kHz mono)
-    audioContext = new AudioContext({ sampleRate: 16000 })
-    const source = audioContext.createMediaStreamSource(mediaStream)
+    try {
+        audioContext = new AudioContext({ sampleRate: 16000 })
+        const source = audioContext.createMediaStreamSource(mediaStream)
 
-    // Use AudioWorkletNode to replace the deprecated ScriptProcessorNode
-    const workletCode = `
-        class CaptureProcessor extends AudioWorkletProcessor {
-            constructor() {
-                super();
-                this.chunkSize = 2048;
-                this.pending = new Int16Array(this.chunkSize);
-                this.pendingLength = 0;
-            }
-
-            flushChunk() {
-                if (!this.pendingLength) return;
-                const chunk = this.pending.slice(0, this.pendingLength);
-                this.port.postMessage(chunk, [chunk.buffer]);
-                this.pending = new Int16Array(this.chunkSize);
-                this.pendingLength = 0;
-            }
-
-            process(inputs) {
-                const input = inputs[0];
-                if (!input || input.length === 0 || input[0].length === 0) return true;
-
-                const channelData = input[0];
-
-                for (let i = 0; i < channelData.length; i++) {
-                    const sample = Math.max(-1, Math.min(1, channelData[i]));
-                    this.pending[this.pendingLength++] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
-
-                    if (this.pendingLength === this.chunkSize) {
-                        this.flushChunk();
-                    }
+        // Use AudioWorkletNode to replace the deprecated ScriptProcessorNode
+        const workletCode = `
+            class CaptureProcessor extends AudioWorkletProcessor {
+                constructor() {
+                    super();
+                    this.chunkSize = 2048;
+                    this.pending = new Int16Array(this.chunkSize);
+                    this.pendingLength = 0;
                 }
 
-                return true;
+                flushChunk() {
+                    if (!this.pendingLength) return;
+                    const chunk = this.pending.slice(0, this.pendingLength);
+                    this.port.postMessage(chunk, [chunk.buffer]);
+                    this.pending = new Int16Array(this.chunkSize);
+                    this.pendingLength = 0;
+                }
+
+                process(inputs) {
+                    const input = inputs[0];
+                    if (!input || input.length === 0 || input[0].length === 0) return true;
+
+                    const channelData = input[0];
+
+                    for (let i = 0; i < channelData.length; i++) {
+                        const sample = Math.max(-1, Math.min(1, channelData[i]));
+                        this.pending[this.pendingLength++] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+
+                        if (this.pendingLength === this.chunkSize) {
+                            this.flushChunk();
+                        }
+                    }
+
+                    return true;
+                }
             }
+            registerProcessor('capture-processor', CaptureProcessor);
+        `
+        const blob = new Blob([workletCode], { type: "application/javascript" })
+        const workletUrl = URL.createObjectURL(blob)
+        await audioContext.audioWorklet.addModule(workletUrl)
+        URL.revokeObjectURL(workletUrl)
+
+        // We keep scriptProcessor in the outer scope as an any/unknown variable,
+        // but assign the AudioWorkletNode so it can be disconnected later.
+        const workletNode = new AudioWorkletNode(audioContext, "capture-processor")
+        const mutedMonitor = audioContext.createGain()
+        mutedMonitor.gain.value = 0
+        scriptProcessor = workletNode as any
+
+        workletNode.port.onmessage = (event) => {
+            // Send to Electron
+            sendStt("AUDIO_DATA", event.data)
         }
-        registerProcessor('capture-processor', CaptureProcessor);
-    `
-    const blob = new Blob([workletCode], { type: "application/javascript" })
-    const workletUrl = URL.createObjectURL(blob)
-    await audioContext.audioWorklet.addModule(workletUrl)
-    URL.revokeObjectURL(workletUrl)
 
-    // We keep scriptProcessor in the outer scope as an any/unknown variable,
-    // but assign the AudioWorkletNode so it can be disconnected later.
-    const workletNode = new AudioWorkletNode(audioContext, "capture-processor")
-    const mutedMonitor = audioContext.createGain()
-    mutedMonitor.gain.value = 0
-    scriptProcessor = workletNode as any
+        source.connect(workletNode)
+        workletNode.connect(mutedMonitor)
+        mutedMonitor.connect(audioContext.destination)
 
-    workletNode.port.onmessage = (event) => {
-        // Send to Electron
-        sendStt("AUDIO_DATA", event.data)
+        // Tell electron to start the whisper engine
+        sendStt("START", { modelId: settings.model })
+    } catch (err) {
+        console.error("[STT] Audio setup failed:", err)
+
+        // Ensure the mic is never left hot if any step in audio graph setup fails
+        if (mediaStream) {
+            mediaStream.getTracks().forEach((t) => t.stop())
+        }
+        if (audioContext) {
+            audioContext.close()
+        }
+        mediaStream = null
+        audioContext = null
+        scriptProcessor = null
+
+        sttError.set(`Audio setup failed: ${err instanceof Error ? err.message : String(err)}`)
+        sttEnabled.set(false)
+        return
     }
-
-    source.connect(workletNode)
-    workletNode.connect(mutedMonitor)
-    mutedMonitor.connect(audioContext.destination)
-
-    // Tell electron to start the whisper engine
-    sendStt("START", { modelId: settings.model })
 
     sttEnabled.set(true)
     console.log("[STT] Started audio capture")
@@ -316,6 +335,8 @@ function handleDetection(detection: BibleDetection): void {
         return [detection, ...list].slice(0, 10)
     })
 
+    // Intentionally still runs even when the detection is a 5s-duplicate (skipped above only
+    // from the list), so that re-detecting the same verse re-projects it as "previous verse".
     autoShowIfEnabled(detection)
 }
 

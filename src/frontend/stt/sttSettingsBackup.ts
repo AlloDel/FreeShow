@@ -7,16 +7,17 @@ import { sttSettings, type SttSettingsData } from "./sttStore"
 
 const STORAGE_KEY = "freeshow_stt_settings_v1"
 const DEBOUNCE_MS = 500
-const MODEL_MIGRATIONS: Record<string, string> = {
-    "large-v3-turbo": "large-v3-turbo-q5_0"
-}
+/** Fallback for persisted settings referencing a model id that no longer exists (e.g. old Whisper ids). */
+const DEFAULT_MODEL_ID = "zipformer-en-int8"
+/** Known sherpa model ids. Kept in sync with modelManager.ts's MODELS list. */
+const KNOWN_MODEL_IDS = [DEFAULT_MODEL_ID]
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 let installed = false
 
 function normalizeSavedSettings(parsed: Partial<SttSettingsData>): Partial<SttSettingsData> {
-    if (typeof parsed.model === "string") {
-        return { ...parsed, model: MODEL_MIGRATIONS[parsed.model] || parsed.model }
+    if (typeof parsed.model === "string" && !KNOWN_MODEL_IDS.includes(parsed.model)) {
+        return { ...parsed, model: DEFAULT_MODEL_ID }
     }
 
     return parsed

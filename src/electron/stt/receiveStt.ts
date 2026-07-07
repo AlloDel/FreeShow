@@ -73,7 +73,12 @@ function startStt(payload: SttStartPayload): void {
 
     try {
         engine = new SttEngine()
-        engine.on("transcript", (event: TranscriptEvent) => sendToApp("TRANSCRIPT", event))
+        engine.on("transcript", (event: TranscriptEvent) => {
+            sendToApp("TRANSCRIPT", event)
+            // If the engine reported an error/disconnect and is no longer running, clear the
+            // module-level reference so status reports (e.g. modelLoaded) reflect reality.
+            if ((event.type === "error" || event.type === "disconnected") && engine && !engine.isRunning) engine = null
+        })
         engine.start(paths)
         setActiveModel(modelId)
         sendStatus()

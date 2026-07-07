@@ -6,6 +6,7 @@ import { get } from "svelte/store"
 import type { BibleDetection } from "../../types/Stt"
 import { BIBLE_BOOKS } from "./books"
 import { activeScripture, drawerTabsData, scriptures } from "../stores"
+import { sttError } from "./sttStore"
 
 /**
  * Get all available Bible versions from FreeShow's scriptures store.
@@ -21,7 +22,7 @@ export function getAvailableBibleVersions(): { id: string; name: string }[] {
 
 /**
  * Map a detected book name to FreeShow's scripture book index.
- * json-bible uses 0-based book indices.
+ * json-bible matches on the 1-based book number.
  */
 function getScriptureBookIndex(bookName: string): number | string {
     const normalizedInput = bookName.toLowerCase().trim()
@@ -45,6 +46,11 @@ function getScriptureBookIndex(bookName: string): number | string {
  * @param bibleVersionId - Optional specific Bible version to use. If not provided, uses the currently active tab.
  */
 export async function showDetection(detection: BibleDetection, bibleVersionId?: string): Promise<void> {
+    if (Object.keys(get(scriptures)).length === 0) {
+        sttError.set("No Bible installed in FreeShow. Import one in the drawer's Scripture tab.")
+        return
+    }
+
     const bookNumber = getScriptureBookIndex(detection.bookName)
 
     if (bookNumber === 0) {
