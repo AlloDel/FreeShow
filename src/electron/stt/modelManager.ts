@@ -137,7 +137,8 @@ function downloadFile(url: string, target: string, onProgress?: (downloaded: num
 
             https
                 .get(downloadUrl, { headers: { "User-Agent": "FreeShow-STT/1.0" } }, (response) => {
-                    if (response.statusCode === 301 || response.statusCode === 302) {
+                    // Hugging Face serves LFS files via 302 and regular files via 307
+                    if ([301, 302, 303, 307, 308].includes(response.statusCode || 0)) {
                         const redirectUrl = response.headers.location
                         // Drain the original socket before following the redirect
                         response.resume()
