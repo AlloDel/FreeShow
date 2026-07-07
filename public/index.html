@@ -10,7 +10,8 @@
         <!-- Other sites (vimeo):      https://* -->
         <!-- Inline <script>/<style>:  unsafe-inline -->
         <!-- NumberInput math:         unsafe-eval -->
-        <meta http-equiv="Content-Security-Policy" content="script-src 'self' http://www.youtube.com/iframe_api https://* 'unsafe-inline' 'unsafe-eval';" />
+        <!-- STT audio worklet:        blob: -->
+        <meta http-equiv="Content-Security-Policy" content="script-src 'self' blob: http://www.youtube.com/iframe_api https://* 'unsafe-inline' 'unsafe-eval';" />
 
         <title>FreeShow</title>
 
