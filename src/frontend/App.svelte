@@ -1,5 +1,7 @@
 <script lang="ts">
     import MainLayout from "./MainLayout.svelte"
+    import SttOverlay from "./stt/SttOverlay.svelte"
+    import { sttOverlayVisible } from "./stt/sttStore"
     import MainOutput from "./MainOutput.svelte"
     import ContextMenu from "./components/context/ContextMenu.svelte"
     import Pdf from "./components/export/Pdf.svelte"
@@ -88,6 +90,11 @@
             <Recorder />
             <Guide />
             <ProgressPanel />
+
+            <!-- STT Integration: Mounts the draggable Speech-to-Text widget overlay if enabled via the Top menu toggle -->
+            {#if $sttOverlayVisible}
+                <SttOverlay />
+            {/if}
 
             <MainLayout />
 

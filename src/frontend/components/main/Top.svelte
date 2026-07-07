@@ -9,6 +9,7 @@
     import Button from "../inputs/Button.svelte"
     import TopButton from "../inputs/TopButton.svelte"
     import { DEFAULT_DISPLAY_NAME } from "../../utils/SocketHelper"
+    import SttToggle from "../../stt/SttToggle.svelte"
 
     export let isWindows = false
 
@@ -113,6 +114,10 @@
     </span>
     <span style="width: var(--navigation-width);justify-content: flex-end;">
         <TopButton id="draw" red={$drawTool === "fill" || ($drawTool === "zoom" && $drawSettings.zoom?.size !== 100) || !!($drawTool === "paint" && $paintCache?.length)} hideLabel />
+        
+        <!-- STT Integration: Menu button to toggle the STT overlay visibility -->
+        <SttToggle />
+        
         {#if !settingsDisabled}
             <TopButton id="settings" hideLabel />
         {/if}

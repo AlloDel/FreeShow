@@ -3,11 +3,12 @@
 
 import type { Rectangle } from "electron"
 import { BrowserWindow, Menu, app, ipcMain, powerSaveBlocker, protocol, screen } from "electron"
-import { AUDIO, BLACKMAGIC, CLOUD, EXPORT, MAIN, NDI, OUTPUT, STARTUP } from "../types/Channels"
+import { AUDIO, BLACKMAGIC, CLOUD, EXPORT, MAIN, NDI, OUTPUT, STARTUP, STT } from "../types/Channels"
 import { Main } from "../types/IPC/Main"
 import type { Dictionary } from "../types/Settings"
 import { receiveAudio } from "./audio/receiveAudio"
 import { receiveBM } from "./blackmagic/bmdTalk"
+import { receiveStt } from "./stt/receiveStt" // STT Integration: Import the STT IPC receiver
 import { cloudConnect } from "./cloud/cloud"
 import { startExport } from "./data/export"
 import { cleanupProtectedCache, registerProtectedProtocol } from "./data/protected"
@@ -357,6 +358,7 @@ ipcMain.on(CLOUD, cloudConnect)
 ipcMain.on(NDI, receiveNDI)
 ipcMain.on(BLACKMAGIC, receiveBM)
 ipcMain.on(AUDIO, receiveAudio)
+ipcMain.on(STT, receiveStt) // STT Integration: Register the STT IPC channel to route frontend messages to whisperEngine
 
 // send messages to main frontend (should not be used anymore - use sendMain() instead)
 export const toApp = (channel: string, ...args: any[]): void => {

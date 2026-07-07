@@ -9,10 +9,8 @@ files:
     - "!node_modules/@napi-rs"
 
 extraResources:
-    - from: node_modules/slideshow/
-      to: slideshow
-      filter:
-          - connector-*
+    - { from: "node_modules/slideshow/", to: "slideshow", filter: ["connector-*"] }
+    - { from: "src/electron/stt/whisper.cpp/build/bin/", to: ".", filter: ["whisper-cli*", "whisper-server*"] }
 
 # linux
 
