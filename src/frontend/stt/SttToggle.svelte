@@ -26,7 +26,7 @@
         height: 38px;
         border: none;
         background: transparent;
-        color: var(--text, #aaa);
+        color: var(--text);
         cursor: pointer;
         border-radius: 8px;
         display: flex;
@@ -34,14 +34,19 @@
         justify-content: center;
         transition: all 0.2s;
         opacity: 0.7;
+        font-family: var(--font-family);
     }
     .stt-toggle-btn:hover {
-        background: rgba(255, 255, 255, 0.08);
+        background: var(--hover);
+        opacity: 1;
+    }
+    .stt-toggle-btn:focus-visible {
+        background: var(--focus);
         opacity: 1;
     }
     .stt-toggle-btn.active {
-        background: rgba(255, 255, 255, 0.12);
-        color: var(--primary, #6366f1);
+        background: var(--hover);
+        color: var(--secondary);
         opacity: 1;
     }
 
@@ -67,6 +72,6 @@
         width: 6px;
         height: 6px;
         border-radius: 50%;
-        background: #22c55e;
+        background: var(--connected);
     }
 </style>
