@@ -13,6 +13,12 @@ const FILLER_PHRASES = ["please open your bibles to", "let us turn to", "let's t
 /** Phrases indicating the speaker wants to revisit the previous verse. */
 const PREVIOUS_VERSE_PHRASES = ["previous verse", "last verse", "that verse again", "go back to that verse", "back to that verse", "the same verse", "repeat that verse"]
 
+/** Phrases indicating the speaker wants to advance to the next verse. */
+const NEXT_VERSE_PHRASES = ["next verse", "following verse", "verse after that"]
+
+/** Highest verse number in the Bible (Psalm 119:176). */
+const MAX_VERSE = 176
+
 /** How long a spoken book+chapter context stays warm for follow-up verse mentions. */
 const CONTEXT_TIMEOUT_MS = 60_000
 
@@ -51,6 +57,13 @@ export class BibleDetector {
     processTranscript(text: string): BibleDetection[] {
         if (!text) return []
         const cleaned = this.cleanTranscript(text)
+
+        const next = this.checkNextVerseCommand(cleaned)
+        if (next) {
+            this.setContext(next, false)
+            this.pushRecent(next)
+            return [next]
+        }
 
         const previous = this.checkPreviousVerseCommand(cleaned)
         if (previous) {
@@ -123,7 +136,7 @@ export class BibleDetector {
         if (!this.isContextLive()) return null
         const context = this.context!
 
-        const verse = this.extractVerseOnly(cleaned, context.allowBareVerse)
+        const verse = this.extractVerseOnly(cleaned, context.allowBareVerse) || this.extractLoneNumber(cleaned)
         if (!verse) return null
 
         // No real change — same verse as the active context
@@ -312,6 +325,16 @@ export class BibleDetector {
             }
         }
 
+        // Pattern 3b: "chapter 5 22" / "chapter 5 twenty two" — chapter keyword, verse without keyword
+        // (STT often drops the word "verse": "Genesis chapter 5 22" means Genesis 5:22)
+        const chapterBareVerse = /^(?:chapter|chap|ch)\s+(\d{1,3}|[a-z ]+?)\s+(\d{1,3}|[a-z]+(?:\s+[a-z]+)?)(?:\s|$|[,.!?;:])/i
+        const chapterBareVerseMatch = afterBook.match(chapterBareVerse)
+        if (chapterBareVerseMatch) {
+            const chapter = this.parseNumber(chapterBareVerseMatch[1])
+            const verseStart = this.parseNumber(chapterBareVerseMatch[2])
+            if (chapter > 0 && verseStart > 0) return { chapter, verseStart }
+        }
+
         // Pattern 4: "chapter N" (explicit keyword) — chapter-only
         const chapterOnlySpoken = /^(?:chapter|chap|ch)\s+(\d{1,3}|[a-z ]+?)(?:\s|$|[,.!?;:])/i
         const chapterOnlySpokenMatch = afterBook.match(chapterOnlySpoken)
@@ -348,6 +371,39 @@ export class BibleDetector {
         }
 
         return 0
+    }
+
+    /**
+     * A number as the ENTIRE utterance ("14", "twenty eight") while a context is warm
+     * is a verse jump — STT frequently drops the word "verse" from "verse 14".
+     * Utterances are VAD-segmented, so a lone number is a strong signal; numbers
+     * embedded in longer speech ("16 people came forward") never match.
+     */
+    private extractLoneNumber(text: string): { start: number; end?: number } | null {
+        const alone = text
+            .toLowerCase()
+            .replace(/[.,!?;:]/g, "")
+            .trim()
+        if (!alone || alone.split(" ").length > 2) return null
+
+        const num = this.parseNumber(alone)
+        if (num > 0 && num <= MAX_VERSE) return { start: num }
+        return null
+    }
+
+    private checkNextVerseCommand(text: string): BibleDetection | null {
+        const lower = text.toLowerCase()
+        for (const phrase of NEXT_VERSE_PHRASES) {
+            if (!lower.includes(phrase)) continue
+            const front = this.recentDetections[0]
+            if (!front) return null
+
+            const nextVerse = (front.verseEnd || front.verseStart) + 1
+            if (nextVerse > MAX_VERSE) return null
+
+            return this.makeDetection(front.bookNumber, front.bookName, front.chapter, nextVerse, undefined, 0.95, text, "contextual")
+        }
+        return null
     }
 
     private checkPreviousVerseCommand(text: string): BibleDetection | null {
