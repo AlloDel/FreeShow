@@ -31,31 +31,41 @@ const VAD_MAX_SPEECH = 20
 export class SttEngine extends EventEmitter {
     isRunning = false
     private recognizer: any = null
+    private fallbackRecognizer: any = null
     private vad: any = null
     private liveStream: any = null
     private lastPartial = ""
     private preroll: Float32Array[] = []
     private prerollSamples = 0
+    /** Raw audio of the current utterance, kept for the fallback re-decode. */
+    private utteranceAudio: Float32Array[] = []
+    private utteranceAudioSamples = 0
 
     /** Create the recognizer + VAD and start accepting audio. Throws if the addon or models fail to load. */
-    start(paths: SherpaModelPaths, vadModelPath: string): void {
+    start(paths: SherpaModelPaths, vadModelPath: string, fallbackPaths?: SherpaModelPaths | null): void {
         // Lazy require so the app still boots on platforms where the addon fails to load
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         const sherpa = require("sherpa-onnx-node")
 
-        this.recognizer = new sherpa.OnlineRecognizer({
-            featConfig: { sampleRate: SAMPLE_RATE, featureDim: 80 },
-            modelConfig: {
-                transducer: { encoder: paths.encoder, decoder: paths.decoder, joiner: paths.joiner },
-                tokens: paths.tokens,
-                numThreads: 2,
-                provider: "cpu",
-                debug: 0
-            },
-            decodingMethod: "greedy_search",
-            // Endpointing is handled by the VAD gate — see the header comment
-            enableEndpoint: false
-        })
+        const makeRecognizer = (p: SherpaModelPaths) =>
+            new sherpa.OnlineRecognizer({
+                featConfig: { sampleRate: SAMPLE_RATE, featureDim: 80 },
+                modelConfig: {
+                    transducer: { encoder: p.encoder, decoder: p.decoder, joiner: p.joiner },
+                    tokens: p.tokens,
+                    numThreads: 2,
+                    provider: "cpu",
+                    debug: 0
+                },
+                decodingMethod: "greedy_search",
+                // Endpointing is handled by the VAD gate — see the header comment
+                enableEndpoint: false
+            })
+
+        this.recognizer = makeRecognizer(paths)
+        // Large transducers sometimes emit NOTHING for short isolated utterances
+        // ("next", "eight") — a smaller model re-decodes those as a safety net.
+        this.fallbackRecognizer = fallbackPaths ? makeRecognizer(fallbackPaths) : null
 
         this.vad = new sherpa.Vad(
             {
@@ -91,13 +101,17 @@ export class SttEngine extends EventEmitter {
                 if (!this.liveStream) {
                     this.liveStream = this.recognizer.createStream()
                     // recover the utterance head captured before VAD triggered
-                    for (const chunk of this.preroll) this.liveStream.acceptWaveform({ sampleRate: SAMPLE_RATE, samples: chunk })
+                    for (const chunk of this.preroll) {
+                        this.liveStream.acceptWaveform({ sampleRate: SAMPLE_RATE, samples: chunk })
+                        this.bufferUtteranceAudio(chunk)
+                    }
                     this.preroll = []
                     this.prerollSamples = 0
                     this.lastPartial = ""
                 }
 
                 this.liveStream.acceptWaveform({ sampleRate: SAMPLE_RATE, samples })
+                this.bufferUtteranceAudio(samples)
                 while (this.recognizer.isReady(this.liveStream)) this.recognizer.decode(this.liveStream)
 
                 const text: string = (this.recognizer.getResult(this.liveStream).text || "").trim()
@@ -139,6 +153,7 @@ export class SttEngine extends EventEmitter {
 
         this.isRunning = false
         this.recognizer = null
+        this.fallbackRecognizer = null
         this.vad = null
         this.resetState()
         this.emitTranscript({ type: "disconnected" })
@@ -153,11 +168,37 @@ export class SttEngine extends EventEmitter {
         this.liveStream.acceptWaveform({ sampleRate: SAMPLE_RATE, samples: new Float32Array(FINALIZE_PAD_SAMPLES) })
         while (this.recognizer.isReady(this.liveStream)) this.recognizer.decode(this.liveStream)
 
-        const text: string = (this.recognizer.getResult(this.liveStream).text || "").trim()
+        let text: string = (this.recognizer.getResult(this.liveStream).text || "").trim()
+
+        // Main model heard nothing — let the fallback model try the same audio
+        if (!text && this.fallbackRecognizer && this.utteranceAudioSamples > 0) {
+            text = this.decodeWithFallback()
+            if (text) console.log(`[STT] Fallback model recovered: "${text}"`)
+        }
+
         if (text) this.emitTranscript({ type: "final", transcript: text })
 
         this.liveStream = null
         this.lastPartial = ""
+        this.utteranceAudio = []
+        this.utteranceAudioSamples = 0
+    }
+
+    private bufferUtteranceAudio(samples: Float32Array): void {
+        this.utteranceAudio.push(samples)
+        this.utteranceAudioSamples += samples.length
+        // cap the buffer — fallback only matters for short utterances anyway
+        while (this.utteranceAudioSamples > VAD_MAX_SPEECH * SAMPLE_RATE && this.utteranceAudio.length > 1) {
+            this.utteranceAudioSamples -= this.utteranceAudio.shift()!.length
+        }
+    }
+
+    private decodeWithFallback(): string {
+        const stream = this.fallbackRecognizer.createStream()
+        for (const chunk of this.utteranceAudio) stream.acceptWaveform({ sampleRate: SAMPLE_RATE, samples: chunk })
+        stream.acceptWaveform({ sampleRate: SAMPLE_RATE, samples: new Float32Array(FINALIZE_PAD_SAMPLES) })
+        while (this.fallbackRecognizer.isReady(stream)) this.fallbackRecognizer.decode(stream)
+        return (this.fallbackRecognizer.getResult(stream).text || "").trim()
     }
 
     private resetState(): void {
@@ -165,6 +206,8 @@ export class SttEngine extends EventEmitter {
         this.lastPartial = ""
         this.preroll = []
         this.prerollSamples = 0
+        this.utteranceAudio = []
+        this.utteranceAudioSamples = 0
     }
 
     private emitTranscript(event: TranscriptEvent): void {

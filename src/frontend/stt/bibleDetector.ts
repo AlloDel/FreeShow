@@ -351,6 +351,13 @@ export class BibleDetector {
             if (num > 0 && num <= 150) return { chapter: num, verseStart: 0 }
         }
 
+        // Pattern 5b: bare spoken number after book name "Psalms one hundred and nineteen" — chapter-only
+        const bareSpoken = afterBook.match(/^([a-z]+(?:\s+[a-z]+){0,3})(?:\s|$|[,.!?;:])/i)
+        if (bareSpoken) {
+            const num = this.parseNumber(bareSpoken[1])
+            if (num > 0 && num <= 150) return { chapter: num, verseStart: 0 }
+        }
+
         return null
     }
 
@@ -362,8 +369,29 @@ export class BibleDetector {
         const spoken = SPOKEN_NUMBERS[trimmed.toLowerCase()]
         if (spoken) return spoken
 
-        // Compound spoken numbers: "twenty three" → 23
         const words = trimmed.toLowerCase().split(/\s+/)
+
+        // Spoken hundreds: "one hundred and nineteen", "a hundred nineteen", "hundred and five"
+        const hundredIndex = words.indexOf("hundred")
+        if (hundredIndex !== -1) {
+            const prefix = words.slice(0, hundredIndex).filter((w) => w !== "a")
+            const hundreds = prefix.length === 0 ? 1 : SPOKEN_NUMBERS[prefix[0]] || 0
+            if (prefix.length <= 1 && hundreds >= 1 && hundreds <= 9) {
+                const rest = words.slice(hundredIndex + 1).filter((w) => w !== "and")
+                if (!rest.length) return hundreds * 100
+                const restValue = this.parseNumber(rest.join(" "))
+                if (restValue > 0 && restValue < 100) return hundreds * 100 + restValue
+            }
+            return 0
+        }
+
+        // Hundreds shorthand: "one nineteen" → 119, "one fifty" → 150
+        if (words.length === 2 && words[0] === "one") {
+            const rest = SPOKEN_NUMBERS[words[1]]
+            if (rest && rest >= 10 && rest < 100) return 100 + rest
+        }
+
+        // Compound spoken numbers: "twenty three" → 23
         if (words.length === 2) {
             const tens = SPOKEN_NUMBERS[words[0]]
             const ones = SPOKEN_NUMBERS[words[1]]
