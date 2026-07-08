@@ -330,6 +330,32 @@ describe("BibleDetector", () => {
         })
     })
 
+    describe("spoken hundreds (Psalm 100-150)", () => {
+        it("parses 'one hundred and nineteen'", () => {
+            const [d] = detector.processTranscript("Psalm one hundred and nineteen verse eight")
+            expect(d).toMatchObject({ bookName: "Psalms", chapter: 119, verseStart: 8 })
+        })
+
+        it("parses bare 'hundred and nineteen'", () => {
+            const [d] = detector.processTranscript("Psalms hundred and nineteen verse twelve")
+            expect(d).toMatchObject({ bookName: "Psalms", chapter: 119, verseStart: 12 })
+        })
+
+        it("parses the 'one nineteen' shorthand", () => {
+            const [d] = detector.processTranscript("Psalm one nineteen verse eight")
+            expect(d).toMatchObject({ bookName: "Psalms", chapter: 119, verseStart: 8 })
+        })
+
+        it("parses a chapter-only spoken hundred", () => {
+            const [d] = detector.processTranscript("Psalms one hundred and nineteen")
+            expect(d).toMatchObject({ bookName: "Psalms", chapter: 119, verseStart: 1, source: "contextual" })
+        })
+
+        it("rejects out-of-range hundreds", () => {
+            expect(detector.processTranscript("Psalms two hundred and five")).toEqual([])
+        })
+    })
+
     describe("number homophones (misheard STT output)", () => {
         it("resolves 'to' as two after a book name", () => {
             const [d] = detector.processTranscript("Psalm to eight")
