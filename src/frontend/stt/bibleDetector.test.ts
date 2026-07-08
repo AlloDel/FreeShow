@@ -247,6 +247,71 @@ describe("BibleDetector", () => {
         })
     })
 
+    describe("chapter keyword without verse keyword", () => {
+        it("parses 'chapter N M' as chapter and verse", () => {
+            const [d] = detector.processTranscript("Genesis chapter 5 22")
+            expect(d).toMatchObject({ bookName: "Genesis", chapter: 5, verseStart: 22 })
+        })
+
+        it("parses spoken numbers after the chapter", () => {
+            const [d] = detector.processTranscript("Genesis chapter 5 twenty two")
+            expect(d).toMatchObject({ bookName: "Genesis", chapter: 5, verseStart: 22 })
+        })
+
+        it("still treats a trailing non-number as chapter-only", () => {
+            const [d] = detector.processTranscript("Genesis chapter 5 tells us about the generations")
+            expect(d).toMatchObject({ bookName: "Genesis", chapter: 5, verseStart: 1, source: "contextual" })
+        })
+    })
+
+    describe("next verse command", () => {
+        it("advances to the next verse", () => {
+            detector.processTranscript("John 3:16")
+            const [d] = detector.processTranscript("next verse")
+            expect(d).toMatchObject({ bookName: "John", chapter: 3, verseStart: 17 })
+        })
+
+        it("advances repeatedly", () => {
+            detector.processTranscript("John 3:16")
+            detector.processTranscript("next verse")
+            const [d] = detector.processTranscript("and the next verse")
+            expect(d).toMatchObject({ chapter: 3, verseStart: 18 })
+        })
+
+        it("advances past the end of a range", () => {
+            detector.processTranscript("Genesis 1:1-3")
+            const [d] = detector.processTranscript("next verse")
+            expect(d).toMatchObject({ bookName: "Genesis", chapter: 1, verseStart: 4 })
+        })
+
+        it("does nothing without history", () => {
+            expect(detector.processTranscript("next verse")).toEqual([])
+        })
+    })
+
+    describe("lone-number verse jumps", () => {
+        it("jumps to a bare number when it is the whole utterance", () => {
+            detector.processTranscript("John 3:16")
+            const [d] = detector.processTranscript("14")
+            expect(d).toMatchObject({ bookName: "John", chapter: 3, verseStart: 14 })
+        })
+
+        it("handles spoken numbers as the whole utterance", () => {
+            detector.processTranscript("Genesis 5:22")
+            const [d] = detector.processTranscript("twenty eight")
+            expect(d).toMatchObject({ bookName: "Genesis", chapter: 5, verseStart: 28 })
+        })
+
+        it("ignores numbers embedded in speech after a full reference", () => {
+            detector.processTranscript("John 3:16")
+            expect(detector.processTranscript("16 people came forward")).toEqual([])
+        })
+
+        it("ignores lone numbers without context", () => {
+            expect(detector.processTranscript("14")).toEqual([])
+        })
+    })
+
     describe("number homophones (misheard STT output)", () => {
         it("resolves 'to' as two after a book name", () => {
             const [d] = detector.processTranscript("Psalm to eight")
