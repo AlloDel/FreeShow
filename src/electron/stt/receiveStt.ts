@@ -2,13 +2,69 @@
 // Handles all STT messages over the dedicated "STT" IPC channel.
 // Follows the same pattern as receiveAudio.ts.
 
+import { app } from "electron"
 import type { IpcMainEvent } from "electron"
+import fs from "fs"
+import path from "path"
 import type { SttMessage, SttStartPayload, TranscriptEvent } from "../../types/Stt"
 import { toApp } from "../index"
 import { deleteModel, downloadModel, getActiveModelId, getModelPaths, getModels, setActiveModel } from "./modelManager"
 import { SttEngine } from "./sttEngine"
 
 let engine: SttEngine | null = null
+
+// --- Temporary debug capture while tuning recognition quality ---
+// Keeps the last ~2 minutes of mic audio fed to the engine and writes it to
+// <userData>/stt-last-capture.wav when STT stops. Remove before upstream PR.
+const DEBUG_CAPTURE_MAX_SAMPLES = 16000 * 120
+let debugChunks: Float32Array[] = []
+let debugSampleCount = 0
+
+function debugCapture(samples: Float32Array): void {
+    debugChunks.push(samples)
+    debugSampleCount += samples.length
+    while (debugSampleCount > DEBUG_CAPTURE_MAX_SAMPLES && debugChunks.length > 1) {
+        debugSampleCount -= debugChunks[0].length
+        debugChunks.shift()
+    }
+}
+
+function writeDebugCapture(): void {
+    if (!debugSampleCount) return
+
+    const pcm = Buffer.alloc(44 + debugSampleCount * 2)
+    pcm.write("RIFF", 0)
+    pcm.writeUInt32LE(36 + debugSampleCount * 2, 4)
+    pcm.write("WAVEfmt ", 8)
+    pcm.writeUInt32LE(16, 16)
+    pcm.writeUInt16LE(1, 20) // PCM
+    pcm.writeUInt16LE(1, 22) // mono
+    pcm.writeUInt32LE(16000, 24)
+    pcm.writeUInt32LE(16000 * 2, 28)
+    pcm.writeUInt16LE(2, 32)
+    pcm.writeUInt16LE(16, 34)
+    pcm.write("data", 36)
+    pcm.writeUInt32LE(debugSampleCount * 2, 40)
+
+    let offset = 44
+    for (const chunk of debugChunks) {
+        for (let i = 0; i < chunk.length; i++) {
+            const s = Math.max(-1, Math.min(1, chunk[i]))
+            pcm.writeInt16LE(s < 0 ? s * 0x8000 : s * 0x7fff, offset)
+            offset += 2
+        }
+    }
+
+    const filePath = path.join(app.getPath("userData"), "stt-last-capture.wav")
+    try {
+        fs.writeFileSync(filePath, pcm)
+        console.log(`[STT] Debug capture written: ${filePath} (${(debugSampleCount / 16000).toFixed(1)}s)`)
+    } catch (err) {
+        console.error("[STT] Failed to write debug capture:", err)
+    }
+    debugChunks = []
+    debugSampleCount = 0
+}
 
 function int16ToFloat32(data: Int16Array): Float32Array {
     const samples = new Float32Array(data.length)
@@ -98,6 +154,7 @@ function stopStt(): void {
         engine.stop()
         engine = null
     }
+    writeDebugCapture()
     sendStatus()
     console.log("[STT] Stopped")
 }
@@ -123,6 +180,7 @@ function handleAudioData(data: any): void {
         return
     }
 
+    debugCapture(samples)
     engine.pushAudio(samples)
 }
 
