@@ -393,16 +393,27 @@ export class BibleDetector {
 
     private checkNextVerseCommand(text: string): BibleDetection | null {
         const lower = text.toLowerCase()
-        for (const phrase of NEXT_VERSE_PHRASES) {
-            if (!lower.includes(phrase)) continue
-            const front = this.recentDetections[0]
-            if (!front) return null
+        const whole = lower.replace(/[.,!?;:]/g, "").trim()
+        const front = this.recentDetections[0]
+        if (!front) return null
 
+        // Bare single-word commands only count as the WHOLE utterance
+        // (utterances are VAD-segmented, so "next" mid-sentence never triggers)
+        const isNext = NEXT_VERSE_PHRASES.some((phrase) => lower.includes(phrase)) || whole === "next"
+        const isBack = whole === "back" || whole === "previous" || whole === "go back"
+
+        if (isNext) {
             const nextVerse = (front.verseEnd || front.verseStart) + 1
             if (nextVerse > MAX_VERSE) return null
-
             return this.makeDetection(front.bookNumber, front.bookName, front.chapter, nextVerse, undefined, 0.95, text, "contextual")
         }
+
+        if (isBack) {
+            const previousVerse = front.verseStart - 1
+            if (previousVerse < 1) return null
+            return this.makeDetection(front.bookNumber, front.bookName, front.chapter, previousVerse, undefined, 0.95, text, "contextual")
+        }
+
         return null
     }
 

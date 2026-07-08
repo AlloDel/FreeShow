@@ -287,6 +287,24 @@ describe("BibleDetector", () => {
         it("does nothing without history", () => {
             expect(detector.processTranscript("next verse")).toEqual([])
         })
+
+        it("treats bare 'next' as a whole utterance as the command", () => {
+            detector.processTranscript("John 3:16")
+            const [d] = detector.processTranscript("Next")
+            expect(d).toMatchObject({ bookName: "John", chapter: 3, verseStart: 17 })
+        })
+
+        it("treats bare 'back' as a whole utterance as step-back", () => {
+            detector.processTranscript("John 3:16")
+            detector.processTranscript("next verse")
+            const [d] = detector.processTranscript("back")
+            expect(d).toMatchObject({ chapter: 3, verseStart: 16 })
+        })
+
+        it("ignores 'next' inside longer speech", () => {
+            detector.processTranscript("John 3:16")
+            expect(detector.processTranscript("next week we will meet again")).toEqual([])
+        })
     })
 
     describe("lone-number verse jumps", () => {
