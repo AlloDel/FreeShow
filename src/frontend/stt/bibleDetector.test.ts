@@ -204,6 +204,49 @@ describe("BibleDetector", () => {
         })
     })
 
+    describe("fuzzy book names (misheard STT output)", () => {
+        it("resolves a near-miss long book name", () => {
+            const [d] = detector.processTranscript("Isaia 53 verse 5")
+            expect(d).toMatchObject({ bookName: "Isaiah", chapter: 53, verseStart: 5 })
+        })
+
+        it("resolves a misheard Habakkuk", () => {
+            const [d] = detector.processTranscript("let us turn to Habakuk 2 verse 14")
+            expect(d).toMatchObject({ bookName: "Habakkuk", chapter: 2, verseStart: 14 })
+        })
+
+        it("resolves a common Galatians misspelling", () => {
+            const [d] = detector.processTranscript("Galations 5:22")
+            expect(d).toMatchObject({ bookName: "Galatians", chapter: 5, verseStart: 22 })
+        })
+
+        it("resolves a misheard numbered book", () => {
+            const detections = detector.processTranscript("second Korinthians 5:17")
+            expect(detections).toHaveLength(1)
+            expect(detections[0]).toMatchObject({ bookName: "2 Corinthians", chapter: 5, verseStart: 17 })
+        })
+
+        it("scores fuzzy matches lower than exact matches", () => {
+            const [fuzzy] = detector.processTranscript("Isaia 53:5")
+            detector.reset()
+            const [exact] = detector.processTranscript("Isaiah 53:5")
+            expect(fuzzy.confidence).toBeLessThan(exact.confidence)
+        })
+
+        it("does not synthesize chapter-only detections from fuzzy matches", () => {
+            expect(detector.processTranscript("Isaia 53")).toEqual([])
+        })
+
+        it("does not fuzzy-match short common words", () => {
+            expect(detector.processTranscript("I was like 3 16 when it happened")).toEqual([])
+            expect(detector.processTranscript("the ants go marching 2 by 2")).toEqual([])
+        })
+
+        it("does not fuzzy-match unrelated words", () => {
+            expect(detector.processTranscript("the pastor mentioned 3 things at 5 o'clock")).toEqual([])
+        })
+    })
+
     describe("reset", () => {
         it("clears context and history", () => {
             detector.processTranscript("John 3:16")
