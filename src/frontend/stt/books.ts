@@ -133,6 +133,13 @@ export function buildBookLookup(): Map<string, BookEntry> {
  * Supports numbers up to ~176 (max verse in Bible, Psalm 119).
  */
 export const SPOKEN_NUMBERS: { [key: string]: number } = {
+    // common STT homophones (observed in live captures: "Psalm to eight" = Psalm 2:8)
+    to: 2,
+    too: 2,
+    won: 1,
+    for: 4,
+    fore: 4,
+    ate: 8,
     one: 1,
     two: 2,
     three: 3,

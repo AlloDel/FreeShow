@@ -247,6 +247,24 @@ describe("BibleDetector", () => {
         })
     })
 
+    describe("number homophones (misheard STT output)", () => {
+        it("resolves 'to' as two after a book name", () => {
+            const [d] = detector.processTranscript("Psalm to eight")
+            expect(d).toMatchObject({ bookName: "Psalms", chapter: 2, verseStart: 8 })
+        })
+
+        it("resolves 'for' as four", () => {
+            const [d] = detector.processTranscript("Genesis for twelve")
+            expect(d).toMatchObject({ bookName: "Genesis", chapter: 4, verseStart: 12 })
+        })
+
+        it("keeps 'to' working as a range separator", () => {
+            detector.processTranscript("Romans 8:1")
+            const [d] = detector.processTranscript("verses 5 to 8")
+            expect(d).toMatchObject({ chapter: 8, verseStart: 5, verseEnd: 8 })
+        })
+    })
+
     describe("reset", () => {
         it("clears context and history", () => {
             detector.processTranscript("John 3:16")
