@@ -31,7 +31,12 @@ interface BookMatch {
     book: BookEntry
     start: number
     end: number
+    /** Matched via edit-distance fallback (misheard STT output) — requires a full chapter+verse to count. */
+    fuzzy?: boolean
 }
+
+/** Confidence penalty applied to fuzzy (edit-distance) book matches. */
+const FUZZY_CONFIDENCE_PENALTY = 0.08
 
 export class BibleDetector {
     private context: ActiveContext | null = null
@@ -79,6 +84,10 @@ export class BibleDetector {
 
             if (ref.chapter > 0 && ref.chapter > match.book.maxChapters) continue
 
+            // A misheard-name match needs a full chapter+verse to count — a bare number
+            // after an unrecognized word is far too weak evidence.
+            if (match.fuzzy && ref.verseStart === 0) continue
+
             // Chapter-only ("Genesis 3"): show verse 1 and keep the context warm
             if (ref.verseStart === 0) {
                 const alreadyActive = this.isContextLive() && this.context!.bookNumber === match.book.number && this.context!.chapter === ref.chapter
@@ -98,7 +107,7 @@ export class BibleDetector {
                 continue
             }
 
-            const confidence = this.computeConfidence(ref)
+            const confidence = this.computeConfidence(ref) - (match.fuzzy ? FUZZY_CONFIDENCE_PENALTY : 0)
             const detection = this.makeDetection(match.book.number, match.book.name, ref.chapter, ref.verseStart, ref.verseEnd, confidence, cleaned, "direct")
             this.setContext(detection, false)
             this.pushRecent(detection)
@@ -205,12 +214,59 @@ export class BibleDetector {
             }
         }
 
+        this.findFuzzyBooks(lower, matches)
+
         // Suppress matches fully contained within a longer match ("john" inside
         // "first john") — each book scans independently, so a numbered book's
         // spoken variant can also trigger a spurious match for the bare book name.
         const filtered = matches.filter((match) => !matches.some((other) => other !== match && other.start <= match.start && match.end <= other.end && other.end - other.start > match.end - match.start))
 
         return filtered.sort((a, b) => a.start - b.start)
+    }
+
+    /**
+     * Edit-distance fallback for misheard book names ("Isaia", "Habakuk", "Galations").
+     * Only names of 5+ characters participate (distance 1; 2 for 8+ chars), so short
+     * common-word names like Luke/Mark/John/Acts/Job never fuzzy-match everyday speech
+     * ("like", "ants", …). Fuzzy matches are marked and only count with a full
+     * chapter+verse reference after them.
+     */
+    private findFuzzyBooks(lower: string, matches: BookMatch[]): void {
+        const words = [...lower.matchAll(/[a-z]+/g)]
+
+        for (let w = 0; w < words.length; w++) {
+            // single words and two-word candidates ("second korinthians")
+            const candidates: { text: string; start: number; end: number }[] = [{ text: words[w][0], start: words[w].index!, end: words[w].index! + words[w][0].length }]
+            if (w + 1 < words.length) {
+                const joined = `${words[w][0]} ${words[w + 1][0]}`
+                candidates.push({ text: joined, start: words[w].index!, end: words[w + 1].index! + words[w + 1][0].length })
+            }
+
+            for (const candidate of candidates) {
+                if (candidate.text.length < 5) continue
+                // skip regions already matched exactly
+                if (matches.some((m) => m.start < candidate.end && candidate.start < m.end)) continue
+
+                for (const book of BIBLE_BOOKS) {
+                    const allNames = [book.name.toLowerCase(), ...book.spokenVariants.map((v) => v.toLowerCase())]
+                    let matched = false
+
+                    for (const name of allNames) {
+                        if (name.length < 5) continue
+                        const maxDist = name.length >= 8 ? 2 : 1
+                        if (Math.abs(name.length - candidate.text.length) > maxDist) continue
+                        if (name === candidate.text) continue // exact matches are handled above
+
+                        if (levenshtein(candidate.text, name, maxDist) <= maxDist) {
+                            matches.push({ book, start: candidate.start, end: candidate.end, fuzzy: true })
+                            matched = true
+                            break
+                        }
+                    }
+                    if (matched) break
+                }
+            }
+        }
     }
 
     private parseReference(text: string, match: BookMatch): { chapter: number; verseStart: number; verseEnd?: number } | null {
@@ -352,4 +408,29 @@ export class BibleDetector {
         this.recentDetections.unshift(detection)
         if (this.recentDetections.length > 5) this.recentDetections.pop()
     }
+}
+
+/** Levenshtein distance with early exit once `maxDist` is exceeded. */
+function levenshtein(a: string, b: string, maxDist: number): number {
+    if (a === b) return 0
+    if (Math.abs(a.length - b.length) > maxDist) return maxDist + 1
+
+    let prev = Array.from({ length: b.length + 1 }, (_, i) => i)
+    const current = new Array(b.length + 1).fill(0)
+
+    for (let i = 1; i <= a.length; i++) {
+        current[0] = i
+        let rowMin = i
+
+        for (let j = 1; j <= b.length; j++) {
+            const cost = a[i - 1] === b[j - 1] ? 0 : 1
+            current[j] = Math.min(prev[j] + 1, current[j - 1] + 1, prev[j - 1] + cost)
+            if (current[j] < rowMin) rowMin = current[j]
+        }
+
+        if (rowMin > maxDist) return maxDist + 1
+        prev = [...current]
+    }
+
+    return prev[b.length]
 }
