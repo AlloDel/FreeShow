@@ -82,6 +82,8 @@ export interface ModelInfo {
 /** STT start message payload. */
 export interface SttStartPayload {
     modelId?: string
+    /** Opt-in diagnostics: keep the session's last minutes of mic audio, saved on stop. */
+    recordSession?: boolean
 }
 
 /** Bible book reference data. */

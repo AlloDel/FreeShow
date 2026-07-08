@@ -66,6 +66,8 @@ export interface SttSettingsData {
     songDetection: boolean
     /** Auto-project matched songs (lock mode). Off = suggest-only. */
     autoShowSongs: boolean
+    /** Diagnostics: record the session's last minutes of mic audio (saved on stop). */
+    recordSession: boolean
 }
 
 export const sttSettings: Writable<SttSettingsData> = writable({
@@ -75,7 +77,8 @@ export const sttSettings: Writable<SttSettingsData> = writable({
     microphoneId: "",
     bibleVersionId: "",
     songDetection: false,
-    autoShowSongs: false
+    autoShowSongs: false,
+    recordSession: false
 })
 
 // --- Models ---

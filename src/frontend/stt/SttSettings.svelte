@@ -52,6 +52,10 @@
         sttSettings.update((s) => ({ ...s, autoShowSongs: !s.autoShowSongs }))
     }
 
+    function toggleRecordSession() {
+        sttSettings.update((s) => ({ ...s, recordSession: !s.recordSession }))
+    }
+
     function handleDownload(modelId: string) {
         downloadModel(modelId)
     }
@@ -132,6 +136,13 @@
     <div class="stt-setting-row" class:disabled={!$sttSettings.songDetection}>
         <label class="stt-setting-label" for="auto-show-songs">Auto-project Songs</label>
         <input type="checkbox" id="auto-show-songs" class="stt-checkbox" checked={$sttSettings.autoShowSongs} disabled={!$sttSettings.songDetection} on:change={toggleSongAutoShow} />
+    </div>
+
+    <div class="stt-setting-row header-like">Diagnostics</div>
+
+    <div class="stt-setting-row">
+        <label class="stt-setting-label" for="record-session" title="Keeps the last 15 minutes of mic audio and saves it when listening stops — used for tuning recognition">Record session audio</label>
+        <input type="checkbox" id="record-session" class="stt-checkbox" checked={$sttSettings.recordSession} on:change={toggleRecordSession} />
     </div>
 
     <!-- Microphone -->

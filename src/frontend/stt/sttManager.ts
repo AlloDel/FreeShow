@@ -124,7 +124,7 @@ export async function startStt(): Promise<void> {
         mutedMonitor.connect(audioContext.destination)
 
         // Tell electron to start the whisper engine
-        sendStt("START", { modelId: settings.model })
+        sendStt("START", { modelId: settings.model, recordSession: settings.recordSession })
     } catch (err) {
         console.error("[STT] Audio setup failed:", err)
 
@@ -494,7 +494,10 @@ function processSongTranscript(transcript: string): void {
 
     const detections = detectSongsFromTranscript(transcript)
     const lockedSongId = getLockedSongId()
-    const differentSong = detections.find((detection) => detection.showId !== lockedSongId)
+    // Breaking an active lock needs clearly stronger evidence than a first-time match —
+    // a stray shared lyric line must not yank the deck to another song mid-worship
+    const LOCK_BREAK_CONFIDENCE = 0.8
+    const differentSong = detections.find((detection) => detection.showId !== lockedSongId && detection.confidence >= LOCK_BREAK_CONFIDENCE)
     if (lockedSongId && differentSong) {
         // Medley / next song: the global matcher strongly identified another song
         unlockSong()

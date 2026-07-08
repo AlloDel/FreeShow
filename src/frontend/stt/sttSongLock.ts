@@ -32,7 +32,8 @@ interface SongLock {
 
 const MIN_WORD_LENGTH = 3
 const MIN_LOCK_COVERAGE = 0.28
-const MISMATCH_EXIT_MS = 3_000
+// Sung STT gets garbled — only sustained non-song speech should release the lock
+const MISMATCH_EXIT_MS = 8_000
 const HARD_TIMEOUT_MS = 4 * 60_000 // 4 min cap on lock without any matches
 const COMMON_LOCK_WORDS = new Set(["and", "are", "for", "from", "have", "into", "let", "not", "our", "out", "that", "the", "this", "unto", "was", "what", "when", "where", "with", "would", "you", "your"])
 

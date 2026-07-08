@@ -2,13 +2,88 @@
 // Handles all STT messages over the dedicated "STT" IPC channel.
 // Follows the same pattern as receiveAudio.ts.
 
+import { app } from "electron"
 import type { IpcMainEvent } from "electron"
+import fs from "fs"
+import path from "path"
 import type { SttMessage, SttStartPayload, TranscriptEvent } from "../../types/Stt"
 import { toApp } from "../index"
 import { deleteModel, downloadModel, ensureVadModel, getActiveModelId, getModelPaths, getModels, setActiveModel } from "./modelManager"
 import { SttEngine } from "./sttEngine"
 
 let engine: SttEngine | null = null
+
+// --- Opt-in session recording (diagnostics) ---
+// When enabled in STT settings, keeps a rolling window of the mic audio fed to
+// the engine and writes it to <userData>/stt-recordings/ when STT stops.
+// Used to replay real services offline and tune recognition thresholds.
+
+const RECORDING_MAX_SAMPLES = 16000 * 60 * 15 // last 15 minutes
+const RECORDINGS_TO_KEEP = 5
+
+let recordingEnabled = false
+let recordingChunks: Float32Array[] = []
+let recordingSampleCount = 0
+
+function recordChunk(samples: Float32Array): void {
+    recordingChunks.push(samples)
+    recordingSampleCount += samples.length
+    while (recordingSampleCount > RECORDING_MAX_SAMPLES && recordingChunks.length > 1) {
+        recordingSampleCount -= recordingChunks[0].length
+        recordingChunks.shift()
+    }
+}
+
+function saveRecording(): void {
+    if (!recordingSampleCount) return
+
+    const wav = Buffer.alloc(44 + recordingSampleCount * 2)
+    wav.write("RIFF", 0)
+    wav.writeUInt32LE(36 + recordingSampleCount * 2, 4)
+    wav.write("WAVEfmt ", 8)
+    wav.writeUInt32LE(16, 16)
+    wav.writeUInt16LE(1, 20) // PCM
+    wav.writeUInt16LE(1, 22) // mono
+    wav.writeUInt32LE(16000, 24)
+    wav.writeUInt32LE(16000 * 2, 28)
+    wav.writeUInt16LE(2, 32)
+    wav.writeUInt16LE(16, 34)
+    wav.write("data", 36)
+    wav.writeUInt32LE(recordingSampleCount * 2, 40)
+
+    let offset = 44
+    for (const chunk of recordingChunks) {
+        for (let i = 0; i < chunk.length; i++) {
+            const sample = Math.max(-1, Math.min(1, chunk[i]))
+            wav.writeInt16LE(sample < 0 ? sample * 0x8000 : sample * 0x7fff, offset)
+            offset += 2
+        }
+    }
+
+    try {
+        const dir = path.join(app.getPath("userData"), "stt-recordings")
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+
+        const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)
+        const filePath = path.join(dir, `session-${stamp}.wav`)
+        fs.writeFileSync(filePath, wav)
+        console.log(`[STT] Session recording saved: ${filePath} (${(recordingSampleCount / 16000 / 60).toFixed(1)} min)`)
+
+        // prune old recordings
+        const files = fs
+            .readdirSync(dir)
+            .filter((f) => f.endsWith(".wav"))
+            .sort()
+        while (files.length > RECORDINGS_TO_KEEP) {
+            fs.unlinkSync(path.join(dir, files.shift()!))
+        }
+    } catch (err) {
+        console.error("[STT] Failed to save session recording:", err)
+    }
+
+    recordingChunks = []
+    recordingSampleCount = 0
+}
 
 function int16ToFloat32(data: Int16Array): Float32Array {
     const samples = new Float32Array(data.length)
@@ -71,6 +146,10 @@ async function startStt(payload: SttStartPayload): Promise<void> {
         return
     }
 
+    recordingEnabled = !!payload?.recordSession
+    recordingChunks = []
+    recordingSampleCount = 0
+
     try {
         const vadModelPath = await ensureVadModel()
         // Small model as a safety net for short utterances the large model ignores
@@ -98,6 +177,7 @@ function stopStt(): void {
         engine.stop()
         engine = null
     }
+    if (recordingEnabled) saveRecording()
     sendStatus()
     console.log("[STT] Stopped")
 }
@@ -123,6 +203,7 @@ function handleAudioData(data: any): void {
         return
     }
 
+    if (recordingEnabled) recordChunk(samples)
     engine.pushAudio(samples)
 }
 
