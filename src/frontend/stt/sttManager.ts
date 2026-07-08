@@ -149,7 +149,7 @@ export async function startStt(): Promise<void> {
 /** Stop the STT pipeline. */
 export function stopStt(): void {
     flushPendingDetections(false)
-    lastDetectorInput = ""
+    endUtterance()
     bibleDetector.reset()
 
     // Stop audio capture
@@ -263,7 +263,10 @@ function sendStt(channel: string, data: any): void {
 function registerSttListener(): void {
     if (ipcListenerId) return
 
-    const id = "stt_listener_" + Date.now()
+    // FIXED id: preload stores receivers by id, so a hot-reloaded module instance
+    // REPLACES the previous listener instead of stacking a duplicate (which caused
+    // every detection to fire twice during dev sessions)
+    const id = "stt_manager_listener"
     window.api.receive(
         STT_CHANNEL as any,
         (msg: { channel: string; data: any }) => {
@@ -303,6 +306,8 @@ const PARTIAL_COMMIT_DELAY_MS = 600
 
 let lastDetectorInput = ""
 const pendingDetections = new Map<string, { detection: BibleDetection; timer: ReturnType<typeof setTimeout> }>()
+/** Detections already committed during the current utterance — a differing final must not re-commit them. */
+const utteranceCommittedKeys = new Set<string>()
 
 function detectionKey(d: BibleDetection): string {
     return `${d.bookNumber}-${d.chapter}-${d.verseStart}-${d.verseEnd || 0}`
@@ -333,9 +338,10 @@ function processPartialDetections(transcript: string): void {
             }
         })
 
-        if (pendingDetections.has(key)) return
+        if (pendingDetections.has(key) || utteranceCommittedKeys.has(key)) return
         const timer = setTimeout(() => {
             pendingDetections.delete(key)
+            utteranceCommittedKeys.add(key)
             handleDetection(detection)
         }, PARTIAL_COMMIT_DELAY_MS)
         pendingDetections.set(key, { detection, timer })
@@ -348,6 +354,11 @@ function flushPendingDetections(commit: boolean): void {
         if (commit) handleDetection(detection)
     })
     pendingDetections.clear()
+}
+
+function endUtterance(): void {
+    utteranceCommittedKeys.clear()
+    lastDetectorInput = ""
 }
 
 function handleTranscript(event: TranscriptEvent): void {
@@ -369,9 +380,12 @@ function handleTranscript(event: TranscriptEvent): void {
                     flushPendingDetections(true)
                 } else {
                     flushPendingDetections(false)
-                    bibleDetector.processTranscript(event.transcript).forEach((d) => handleDetection(d))
+                    bibleDetector
+                        .processTranscript(event.transcript)
+                        .filter((d) => !utteranceCommittedKeys.has(detectionKey(d)))
+                        .forEach((d) => handleDetection(d))
                 }
-                lastDetectorInput = ""
+                endUtterance()
             }
             break
         case "connected":
@@ -380,14 +394,14 @@ function handleTranscript(event: TranscriptEvent): void {
             break
         case "disconnected":
             flushPendingDetections(false)
-            lastDetectorInput = ""
+            endUtterance()
             bibleDetector.reset()
             sttStatus.update((s) => ({ ...s, connected: false }))
             break
         case "error":
             console.error("[STT] Engine error:", event.error)
             flushPendingDetections(false)
-            lastDetectorInput = ""
+            endUtterance()
             bibleDetector.reset()
             sttError.set(event.error || "Unknown error")
             sttStatus.update((s) => ({ ...s, connected: false }))

@@ -108,7 +108,17 @@ export async function showDetection(detection: BibleDetection, bibleVersionId?: 
 
     // Dynamically import and call playScripture to avoid circular deps
     try {
-        const { playScripture } = await import("../components/drawer/bible/scripture")
+        const { playScripture, getActiveScripturesContent } = await import("../components/drawer/bible/scripture")
+
+        // Temporary diagnostics while debugging missing verse text on output
+        const tabId = get(drawerTabsData)?.scripture?.activeSubTab || ""
+        const scriptureData = get(scriptures)[tabId] as any
+        console.log(`[STT] scripture tab: "${tabId}" name: "${scriptureData?.customName || scriptureData?.name}" api: ${!!scriptureData?.api} collection: ${!!scriptureData?.collection}`)
+        const content = (await getActiveScripturesContent()) as any[] | null
+        const first = content?.[0]
+        const verseText = first?.verses?.[0]?.[detection.verseStart]
+        console.log(`[STT] content loaded: ${!!first} book: "${first?.book}" verse ${detection.verseStart} text: ${verseText ? `"${String(verseText).substring(0, 60)}..."` : "EMPTY"}`)
+
         await playScripture()
         console.log(`[STT] Displayed: ${detection.bookName} ${detection.chapter}:${detection.verseStart}${detection.verseEnd ? "-" + detection.verseEnd : ""}`)
     } catch (err) {
