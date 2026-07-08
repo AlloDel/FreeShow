@@ -8,7 +8,7 @@ import fs from "fs"
 import path from "path"
 import type { SttMessage, SttStartPayload, TranscriptEvent } from "../../types/Stt"
 import { toApp } from "../index"
-import { deleteModel, downloadModel, getActiveModelId, getModelPaths, getModels, setActiveModel } from "./modelManager"
+import { deleteModel, downloadModel, ensureVadModel, getActiveModelId, getModelPaths, getModels, setActiveModel } from "./modelManager"
 import { SttEngine } from "./sttEngine"
 
 let engine: SttEngine | null = null
@@ -80,7 +80,7 @@ export function receiveStt(_e: IpcMainEvent, msg: SttMessage): void {
 
     switch (channel) {
         case "START":
-            startStt(data)
+            void startStt(data)
             break
         case "STOP":
             stopStt()
@@ -114,7 +114,7 @@ export function receiveStt(_e: IpcMainEvent, msg: SttMessage): void {
 
 // --- Handlers ---
 
-function startStt(payload: SttStartPayload): void {
+async function startStt(payload: SttStartPayload): Promise<void> {
     if (engine?.isRunning) {
         console.log("[STT] Already running")
         return
@@ -128,6 +128,7 @@ function startStt(payload: SttStartPayload): void {
     }
 
     try {
+        const vadModelPath = await ensureVadModel()
         engine = new SttEngine()
         engine.on("transcript", (event: TranscriptEvent) => {
             // Terminal visibility while tuning recognition quality
@@ -138,7 +139,7 @@ function startStt(payload: SttStartPayload): void {
             // module-level reference so status reports (e.g. modelLoaded) reflect reality.
             if ((event.type === "error" || event.type === "disconnected") && engine && !engine.isRunning) engine = null
         })
-        engine.start(paths)
+        engine.start(paths, vadModelPath)
         setActiveModel(modelId)
         sendStatus()
         console.log(`[STT] Started with model: ${modelId}`)

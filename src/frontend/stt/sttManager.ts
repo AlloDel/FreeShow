@@ -148,6 +148,8 @@ export async function startStt(): Promise<void> {
 
 /** Stop the STT pipeline. */
 export function stopStt(): void {
+    flushPendingDetections(false)
+    lastDetectorInput = ""
     bibleDetector.reset()
 
     // Stop audio capture
@@ -289,18 +291,87 @@ function handleSttMessage(msg: { channel: string; data: any }): void {
     }
 }
 
+// --- Partial-transcript detection ---
+// During continuous speech (sermons) an utterance can run for many seconds before a
+// pause finalizes it, so references are detected on the STREAMING partials and
+// committed after a short stabilization delay. The delay lets the next partial
+// correct a still-growing verse number ("Psalm 90:1" while saying "90:12") before
+// anything is projected. The engine's final for an utterance is the same text as
+// its last partial, so an identical final just flushes the pending detections.
+
+const PARTIAL_COMMIT_DELAY_MS = 600
+
+let lastDetectorInput = ""
+const pendingDetections = new Map<string, { detection: BibleDetection; timer: ReturnType<typeof setTimeout> }>()
+
+function detectionKey(d: BibleDetection): string {
+    return `${d.bookNumber}-${d.chapter}-${d.verseStart}-${d.verseEnd || 0}`
+}
+
+function normalizeForCompare(text: string): string {
+    return text
+        .toLowerCase()
+        .replace(/[^a-z0-9 ]/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+}
+
+function processPartialDetections(transcript: string): void {
+    if (transcript === lastDetectorInput) return
+    lastDetectorInput = transcript
+
+    bibleDetector.processTranscript(transcript).forEach((detection) => {
+        const key = detectionKey(detection)
+
+        // A newer verse for the same book+chapter replaces a still-pending older one
+        // (the earlier partial saw a prefix of the verse number)
+        pendingDetections.forEach((entry, existingKey) => {
+            if (existingKey === key) return
+            if (entry.detection.bookNumber === detection.bookNumber && entry.detection.chapter === detection.chapter) {
+                clearTimeout(entry.timer)
+                pendingDetections.delete(existingKey)
+            }
+        })
+
+        if (pendingDetections.has(key)) return
+        const timer = setTimeout(() => {
+            pendingDetections.delete(key)
+            handleDetection(detection)
+        }, PARTIAL_COMMIT_DELAY_MS)
+        pendingDetections.set(key, { detection, timer })
+    })
+}
+
+function flushPendingDetections(commit: boolean): void {
+    pendingDetections.forEach(({ detection, timer }) => {
+        clearTimeout(timer)
+        if (commit) handleDetection(detection)
+    })
+    pendingDetections.clear()
+}
+
 function handleTranscript(event: TranscriptEvent): void {
     switch (event.type) {
         case "partial":
             if (event.transcript) {
                 sttPartialTranscript.set(event.transcript)
+                processPartialDetections(event.transcript)
             }
             break
         case "final":
             if (event.transcript) {
                 sttTranscript.set(event.transcript)
                 sttPartialTranscript.set("")
-                bibleDetector.processTranscript(event.transcript).forEach((d) => handleDetection(d))
+
+                if (normalizeForCompare(event.transcript) === normalizeForCompare(lastDetectorInput)) {
+                    // already analyzed as the last partial (finals may only differ by
+                    // trailing punctuation from the flush) — commit what's pending
+                    flushPendingDetections(true)
+                } else {
+                    flushPendingDetections(false)
+                    bibleDetector.processTranscript(event.transcript).forEach((d) => handleDetection(d))
+                }
+                lastDetectorInput = ""
             }
             break
         case "connected":
@@ -308,11 +379,15 @@ function handleTranscript(event: TranscriptEvent): void {
             sttError.set("")
             break
         case "disconnected":
+            flushPendingDetections(false)
+            lastDetectorInput = ""
             bibleDetector.reset()
             sttStatus.update((s) => ({ ...s, connected: false }))
             break
         case "error":
             console.error("[STT] Engine error:", event.error)
+            flushPendingDetections(false)
+            lastDetectorInput = ""
             bibleDetector.reset()
             sttError.set(event.error || "Unknown error")
             sttStatus.update((s) => ({ ...s, connected: false }))
