@@ -62,6 +62,27 @@ function getModelDef(modelId: string): SttModelDef | null {
     return MODELS.find((m) => m.id === modelId) || null
 }
 
+// --- Silero VAD model (speech gating; tiny, shared by all ASR models) ---
+
+const VAD_MODEL_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
+
+/** Path to the Silero VAD model, or null if not downloaded. */
+export function getVadModelPath(): string | null {
+    const p = path.join(getModelsDir(), "silero_vad.onnx")
+    return fs.existsSync(p) && fs.statSync(p).size > 0 ? p : null
+}
+
+/** Download the Silero VAD model if missing (~630 KB). Returns its path. */
+export async function ensureVadModel(): Promise<string> {
+    const existing = getVadModelPath()
+    if (existing) return existing
+
+    const target = path.join(getModelsDir(), "silero_vad.onnx")
+    await downloadFile(VAD_MODEL_URL, target)
+    console.log("[STT] Downloaded Silero VAD model")
+    return target
+}
+
 function isModelDownloaded(modelId: string): boolean {
     return getModelPaths(modelId) !== null
 }

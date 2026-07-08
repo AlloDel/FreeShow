@@ -4,12 +4,14 @@
 // All Bible detection happens in the frontend (src/frontend/stt/bibleDetector.ts).
 // Loads via rpath-based resolution, no DYLD_LIBRARY_PATH needed (verified Task 1).
 //
-// Utterance segmentation is done with our own energy-based VAD gate and a FRESH
-// recognizer stream per utterance. Sherpa's built-in endpointing + reset() left the
-// NeMo streaming decoder intermittently deaf to the next 1-3 utterances (verified by
-// replaying a live capture: segments that produced nothing in the continuous stream
-// decoded perfectly in isolated streams). A fresh stream per VAD-detected utterance
-// reproduces the always-correct isolated behavior while keeping live partials.
+// Utterance segmentation uses Silero VAD (robust in rooms with constant background
+// noise where energy gates fail) with a FRESH recognizer stream per utterance.
+// Sherpa's built-in endpointing + reset() left the NeMo streaming decoder
+// intermittently deaf to following utterances (verified by capture replays), and a
+// fresh stream per VAD utterance reproduces the always-correct isolated behavior.
+// The utterance's final transcript is taken from the same live stream that produced
+// the partials, so finals cost no extra decode work.
+// NOTE: Electron forbids external ArrayBuffers — vad.front(false) is required.
 
 import { EventEmitter } from "events"
 import type { TranscriptEvent } from "../../types/Stt"
@@ -17,38 +19,26 @@ import type { SherpaModelPaths } from "./modelManager"
 
 const SAMPLE_RATE = 16000
 
-// --- VAD gate tuning (samples @ 16 kHz) ---
-/** Consecutive speech needed to open an utterance (~256 ms). */
-const SPEECH_START_SAMPLES = 4096
-/** Trailing silence that closes an utterance (~768 ms). */
-const SILENCE_END_SAMPLES = 12288
-/** Audio kept from just before speech onset (~640 ms). */
-const PREROLL_MAX_SAMPLES = 10240
-/** Safety cap — force-finalize very long utterances (30 s). */
-const MAX_UTTERANCE_SAMPLES = 30 * SAMPLE_RATE
-/** Silence padding fed before finalizing so the decoder flushes trailing tokens (1 s). */
-const FINALIZE_PAD_SAMPLES = SAMPLE_RATE
-/** Absolute minimum speech threshold (≈ -48 dBFS). */
-const MIN_SPEECH_RMS = 0.004
-/** Speech must be this many times louder than the tracked noise floor. */
-const FLOOR_RATIO = 3
+/** Audio kept from just before VAD triggers, fed to the live stream (~0.5 s). */
+const PREROLL_MAX_SAMPLES = 8000
+/** Silence padding fed before finalizing so the decoder flushes trailing tokens (0.5 s). */
+const FINALIZE_PAD_SAMPLES = 8000
+/** VAD closes an utterance after this much trailing silence (seconds). */
+const VAD_MIN_SILENCE = 0.6
+/** Force-close very long utterances so finals keep flowing during continuous speech (seconds). */
+const VAD_MAX_SPEECH = 20
 
 export class SttEngine extends EventEmitter {
     isRunning = false
     private recognizer: any = null
-    private stream: any = null
+    private vad: any = null
+    private liveStream: any = null
     private lastPartial = ""
-
-    // VAD state
     private preroll: Float32Array[] = []
     private prerollSamples = 0
-    private speechRunSamples = 0
-    private silenceRunSamples = 0
-    private utteranceSamples = 0
-    private noiseFloor = 0.01
 
-    /** Create the recognizer and start accepting audio. Throws if the addon or model fails to load. */
-    start(paths: SherpaModelPaths): void {
+    /** Create the recognizer + VAD and start accepting audio. Throws if the addon or models fail to load. */
+    start(paths: SherpaModelPaths, vadModelPath: string): void {
         // Lazy require so the app still boots on platforms where the addon fails to load
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         const sherpa = require("sherpa-onnx-node")
@@ -63,10 +53,29 @@ export class SttEngine extends EventEmitter {
                 debug: 0
             },
             decodingMethod: "greedy_search",
-            // Endpointing is handled by our VAD gate — see the header comment
+            // Endpointing is handled by the VAD gate — see the header comment
             enableEndpoint: false
         })
-        this.resetVadState()
+
+        this.vad = new sherpa.Vad(
+            {
+                sileroVad: {
+                    model: vadModelPath,
+                    threshold: 0.5,
+                    minSilenceDuration: VAD_MIN_SILENCE,
+                    minSpeechDuration: 0.25,
+                    maxSpeechDuration: VAD_MAX_SPEECH,
+                    windowSize: 512
+                },
+                sampleRate: SAMPLE_RATE,
+                numThreads: 1,
+                provider: "cpu",
+                debug: 0
+            },
+            60 // internal buffer, seconds
+        )
+
+        this.resetState()
         this.isRunning = true
         this.emitTranscript({ type: "connected" })
     }
@@ -76,45 +85,42 @@ export class SttEngine extends EventEmitter {
         if (!this.isRunning || !this.recognizer) return
 
         try {
-            const loud = this.isSpeech(samples)
+            this.vad.acceptWaveform(samples)
 
-            // Waiting for speech: buffer a short pre-roll, open an utterance on sustained sound
-            if (!this.stream) {
+            if (this.vad.isDetected()) {
+                if (!this.liveStream) {
+                    this.liveStream = this.recognizer.createStream()
+                    // recover the utterance head captured before VAD triggered
+                    for (const chunk of this.preroll) this.liveStream.acceptWaveform({ sampleRate: SAMPLE_RATE, samples: chunk })
+                    this.preroll = []
+                    this.prerollSamples = 0
+                    this.lastPartial = ""
+                }
+
+                this.liveStream.acceptWaveform({ sampleRate: SAMPLE_RATE, samples })
+                while (this.recognizer.isReady(this.liveStream)) this.recognizer.decode(this.liveStream)
+
+                const text: string = (this.recognizer.getResult(this.liveStream).text || "").trim()
+                if (text && text !== this.lastPartial) {
+                    this.lastPartial = text
+                    this.emitTranscript({ type: "partial", transcript: text })
+                }
+            } else if (!this.liveStream) {
+                // waiting for speech: keep a short pre-roll ring
                 this.preroll.push(samples)
                 this.prerollSamples += samples.length
                 while (this.prerollSamples - (this.preroll[0]?.length || 0) >= PREROLL_MAX_SAMPLES) {
                     this.prerollSamples -= this.preroll.shift()!.length
                 }
-
-                this.speechRunSamples = loud ? this.speechRunSamples + samples.length : 0
-                if (this.speechRunSamples < SPEECH_START_SAMPLES) return
-
-                this.stream = this.recognizer.createStream()
-                for (const chunk of this.preroll) this.stream.acceptWaveform({ sampleRate: SAMPLE_RATE, samples: chunk })
-                this.decodePending()
-                this.preroll = []
-                this.prerollSamples = 0
-                this.speechRunSamples = 0
-                this.silenceRunSamples = 0
-                this.utteranceSamples = 0
-                return
             }
 
-            // Inside an utterance: decode live for partials
-            this.stream.acceptWaveform({ sampleRate: SAMPLE_RATE, samples })
-            this.decodePending()
-            this.utteranceSamples += samples.length
-
-            const text: string = (this.recognizer.getResult(this.stream).text || "").trim()
-            if (text && text !== this.lastPartial) {
-                this.lastPartial = text
-                this.emitTranscript({ type: "partial", transcript: text })
+            // VAD closed one or more utterances — finalize the live stream
+            let closed = false
+            while (!this.vad.isEmpty()) {
+                this.vad.pop()
+                closed = true
             }
-
-            this.silenceRunSamples = loud ? 0 : this.silenceRunSamples + samples.length
-            if (this.silenceRunSamples >= SILENCE_END_SAMPLES || this.utteranceSamples > MAX_UTTERANCE_SAMPLES) {
-                this.finalizeUtterance()
-            }
+            if (closed) this.finalizeUtterance()
         } catch (err) {
             this.emitTranscript({ type: "error", error: err instanceof Error ? err.message : String(err) })
             this.stop()
@@ -126,60 +132,39 @@ export class SttEngine extends EventEmitter {
 
         // Flush any in-progress utterance so its text isn't lost
         try {
-            if (this.isRunning && this.stream) this.finalizeUtterance()
+            if (this.isRunning && this.liveStream) this.finalizeUtterance()
         } catch (err) {
             console.error("[STT] Failed to flush final utterance:", err)
         }
 
         this.isRunning = false
         this.recognizer = null
-        this.resetVadState()
+        this.vad = null
+        this.resetState()
         this.emitTranscript({ type: "disconnected" })
     }
 
     // --- Private helpers ---
 
-    /** Track a slowly-rising noise floor and compare the chunk's RMS against it. */
-    private isSpeech(samples: Float32Array): boolean {
-        let sum = 0
-        for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i]
-        const rms = Math.sqrt(sum / (samples.length || 1))
-
-        // fast fall to quieter input, slow rise so speech doesn't drag the floor up
-        this.noiseFloor = Math.min(0.02, rms < this.noiseFloor ? rms : this.noiseFloor * 1.002)
-
-        return rms >= Math.max(MIN_SPEECH_RMS, this.noiseFloor * FLOOR_RATIO)
-    }
-
-    private decodePending(): void {
-        while (this.recognizer.isReady(this.stream)) this.recognizer.decode(this.stream)
-    }
-
     /** Pad with silence, flush the decoder, emit the final transcript, discard the stream. */
     private finalizeUtterance(): void {
-        if (!this.stream) return
+        if (!this.liveStream) return
 
-        this.stream.acceptWaveform({ sampleRate: SAMPLE_RATE, samples: new Float32Array(FINALIZE_PAD_SAMPLES) })
-        this.decodePending()
+        this.liveStream.acceptWaveform({ sampleRate: SAMPLE_RATE, samples: new Float32Array(FINALIZE_PAD_SAMPLES) })
+        while (this.recognizer.isReady(this.liveStream)) this.recognizer.decode(this.liveStream)
 
-        const text: string = (this.recognizer.getResult(this.stream).text || "").trim()
+        const text: string = (this.recognizer.getResult(this.liveStream).text || "").trim()
         if (text) this.emitTranscript({ type: "final", transcript: text })
 
-        this.stream = null
+        this.liveStream = null
         this.lastPartial = ""
-        this.utteranceSamples = 0
-        this.silenceRunSamples = 0
     }
 
-    private resetVadState(): void {
-        this.stream = null
+    private resetState(): void {
+        this.liveStream = null
         this.lastPartial = ""
         this.preroll = []
         this.prerollSamples = 0
-        this.speechRunSamples = 0
-        this.silenceRunSamples = 0
-        this.utteranceSamples = 0
-        this.noiseFloor = 0.01
     }
 
     private emitTranscript(event: TranscriptEvent): void {
