@@ -1,4 +1,3 @@
-
 # STT (Frontend side)
 
 This folder owns everything the Electron STT engine (`src/electron/stt/`) does not: microphone

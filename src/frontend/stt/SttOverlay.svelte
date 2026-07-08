@@ -1,7 +1,7 @@
 <script lang="ts">
     import { onMount } from "svelte"
-    import { sttDetections, sttEnabled, sttOverlayVisible, sttMinimized, sttPartialTranscript, sttSettings, sttSettingsOpen, sttStatus, sttTranscript, sttError, sttModels } from "./sttStore"
-    import { clearBibleDetections, dismissDetection, stopStt, toggleStt, downloadModel, deleteModel, requestModels, setModel } from "./sttManager"
+    import { sttDetections, sttEnabled, sttOverlayVisible, sttMinimized, sttPartialTranscript, sttSettings, sttSettingsOpen, sttSongDetections, sttStatus, sttTranscript, sttError, sttModels } from "./sttStore"
+    import { clearBibleDetections, clearSongDetections, dismissDetection, dismissSongDetection, showSongDetection, stopStt, toggleStt, downloadModel, deleteModel, requestModels, setModel } from "./sttManager"
     import { showDetection } from "./sttScriptureHelper"
     import SttSettings from "./SttSettings.svelte"
 
@@ -71,7 +71,7 @@
     $: sttActive = $sttEnabled || $sttStatus.connected
     $: sttStarting = $sttEnabled && !$sttStatus.connected
     $: statusLabel = $sttStatus.isDownloading ? "Downloading" : sttStarting ? "Starting" : $sttStatus.connected ? "Listening" : "Idle"
-    $: transcriptPlaceholder = $sttStatus.isDownloading ? "Model download in progress..." : sttStarting ? "Starting speech recognition..." : $sttStatus.connected ? "Listening for scripture references..." : "Press Start to begin listening."
+    $: transcriptPlaceholder = $sttStatus.isDownloading ? "Model download in progress..." : sttStarting ? "Starting speech recognition..." : $sttStatus.connected ? ($sttSettings.songDetection ? "Listening for scripture references and song lyrics..." : "Listening for scripture references...") : "Press Start to begin listening."
 
     $: activeModel = $sttModels.find((m) => m.id === $sttSettings.model)
     $: currentModelDownloaded = activeModel?.downloaded || false
@@ -179,6 +179,42 @@
                     {/if}
                 </div>
             </section>
+
+            <!-- SONGS -->
+            {#if $sttSettings.songDetection}
+                <section class="stt-section results-section">
+                    <div class="stt-section-title-row">
+                        <span class="stt-section-title">Songs <span class="stt-badge">{$sttSongDetections.length}</span></span>
+                    </div>
+
+                    <div class="stt-results-container">
+                        {#if $sttSongDetections.length > 0}
+                            <div class="stt-results-actions">
+                                <button class="stt-btn-secondary outline" on:click={clearSongDetections}>Clear all</button>
+                            </div>
+                            <div class="stt-list">
+                                {#each $sttSongDetections as song (song.id)}
+                                    <div class="stt-list-item">
+                                        <div class="stt-item-header">
+                                            <strong class="stt-item-title">{song.showName}{song.slideIndex !== undefined ? ` - Slide ${song.slideIndex + 1}` : ""}</strong>
+                                            <span class="stt-item-conf">{formatConfidence(song.confidence)}</span>
+                                        </div>
+                                        {#if song.matchedText}
+                                            <p class="stt-item-desc">"{song.matchedText}"</p>
+                                        {/if}
+                                        <div class="stt-item-actions">
+                                            <button class="stt-btn-secondary outline" on:click={() => dismissSongDetection(song.id)}>Dismiss</button>
+                                            <button class="stt-btn-secondary" on:click={() => showSongDetection(song)}>Project</button>
+                                        </div>
+                                    </div>
+                                {/each}
+                            </div>
+                        {:else}
+                            <div class="stt-empty-state">Listening for song lyrics...</div>
+                        {/if}
+                    </div>
+                </section>
+            {/if}
 
             <!-- DEV MODE MODEL MANAGER -->
             {#if isDev}

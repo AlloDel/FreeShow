@@ -40,6 +40,18 @@
         sttSettings.update((s) => ({ ...s, autoShowBible: !s.autoShowBible }))
     }
 
+    function toggleSongDetection() {
+        sttSettings.update((s) => {
+            const songDetection = !s.songDetection
+            // suggest-first: disabling detection also disables auto-projection
+            return { ...s, songDetection, autoShowSongs: songDetection ? s.autoShowSongs : false }
+        })
+    }
+
+    function toggleSongAutoShow() {
+        sttSettings.update((s) => ({ ...s, autoShowSongs: !s.autoShowSongs }))
+    }
+
     function handleDownload(modelId: string) {
         downloadModel(modelId)
     }
@@ -112,6 +124,16 @@
         <input type="checkbox" id="auto-show-bible" class="stt-checkbox" checked={$sttSettings.autoShowBible} on:change={toggleBibleAutoShow} />
     </div>
 
+    <div class="stt-setting-row">
+        <label class="stt-setting-label" for="song-detection">Song Detection</label>
+        <input type="checkbox" id="song-detection" class="stt-checkbox" checked={$sttSettings.songDetection} on:change={toggleSongDetection} />
+    </div>
+
+    <div class="stt-setting-row" class:disabled={!$sttSettings.songDetection}>
+        <label class="stt-setting-label" for="auto-show-songs">Auto-project Songs</label>
+        <input type="checkbox" id="auto-show-songs" class="stt-checkbox" checked={$sttSettings.autoShowSongs} disabled={!$sttSettings.songDetection} on:change={toggleSongAutoShow} />
+    </div>
+
     <!-- Microphone -->
     <div class="stt-setting-row">
         <label class="stt-setting-label" for="stt-microphone">Microphone</label>
@@ -140,6 +162,11 @@
         flex-direction: column;
         gap: 8px;
         font-family: var(--font-family);
+    }
+
+    .stt-setting-row.disabled {
+        opacity: 0.45;
+        pointer-events: none;
     }
 
     .stt-setting-row {

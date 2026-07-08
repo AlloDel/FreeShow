@@ -2,7 +2,7 @@
 // Svelte stores for STT state, completely separate from FreeShow's stores.ts.
 
 import { writable, type Writable } from "svelte/store"
-import type { BibleDetection, ModelInfo, SttStatus } from "../../types/Stt"
+import type { BibleDetection, ModelInfo, SongDetection, SttStatus } from "../../types/Stt"
 
 // --- Core State ---
 
@@ -36,6 +36,9 @@ export const sttPartialTranscript: Writable<string> = writable("")
 /** Bible verse detections (most recent first). */
 export const sttDetections: Writable<BibleDetection[]> = writable([])
 
+/** Song detections (most recent first). */
+export const sttSongDetections: Writable<SongDetection[]> = writable([])
+
 // --- Settings ---
 
 export interface SttSettingsData {
@@ -45,6 +48,10 @@ export interface SttSettingsData {
     microphoneId: string
     /** Selected Bible version ID for displaying detected verses. Empty = use current active. */
     bibleVersionId: string
+    /** Whether song/lyrics detection runs at all. */
+    songDetection: boolean
+    /** Auto-project matched songs (lock mode). Off = suggest-only. */
+    autoShowSongs: boolean
 }
 
 export const sttSettings: Writable<SttSettingsData> = writable({
@@ -52,7 +59,9 @@ export const sttSettings: Writable<SttSettingsData> = writable({
     autoShowBible: false,
     confidenceThreshold: 0.85,
     microphoneId: "",
-    bibleVersionId: ""
+    bibleVersionId: "",
+    songDetection: false,
+    autoShowSongs: false
 })
 
 // --- Models ---

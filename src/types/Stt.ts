@@ -45,6 +45,19 @@ export interface BibleDetection {
     detectedAt: number
 }
 
+/** A detected song match from the shows library. */
+export interface SongDetection {
+    id: string
+    showId: string
+    showName: string
+    confidence: number
+    matchedText: string
+    source: "title" | "lyrics" | "artist"
+    detectedAt: number
+    slideIndex?: number
+    slideText?: string
+}
+
 /** Current status of the STT engine. */
 export interface SttStatus {
     enabled: boolean

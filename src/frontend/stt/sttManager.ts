@@ -8,10 +8,12 @@
 // all incoming transcript/detection events into Svelte stores (`sttStore.ts`).
 
 import { get } from "svelte/store"
-import type { BibleDetection, SttStatus, TranscriptEvent, ModelInfo } from "../../types/Stt"
-import { sttBibleVersions, sttDetections, sttEnabled, sttError, sttModels, sttPartialTranscript, sttSettings, sttStatus, sttTranscript } from "./sttStore"
+import type { BibleDetection, SongDetection, SttStatus, TranscriptEvent, ModelInfo } from "../../types/Stt"
+import { sttBibleVersions, sttDetections, sttEnabled, sttError, sttModels, sttPartialTranscript, sttSettings, sttSongDetections, sttStatus, sttTranscript } from "./sttStore"
 import { installSttSettingsAutoBackup, restoreSttSettings } from "./sttSettingsBackup"
 import { BibleDetector } from "./bibleDetector"
+import { detectSongsFromTranscript, findBestSongSlide, resetSongMatcher } from "./songMatcher"
+import { getLockedSongId, handleSongLockTranscript, lockSong, resetSongLock } from "./sttSongLock"
 
 const STT_CHANNEL = "STT"
 
@@ -151,6 +153,8 @@ export function stopStt(): void {
     flushPendingDetections(false)
     endUtterance()
     bibleDetector.reset()
+    resetSongMatcher()
+    resetSongLock()
 
     // Stop audio capture
     if (scriptProcessor) {
@@ -367,6 +371,7 @@ function handleTranscript(event: TranscriptEvent): void {
             if (event.transcript) {
                 sttPartialTranscript.set(event.transcript)
                 processPartialDetections(event.transcript)
+                processSongTranscript(event.transcript)
             }
             break
         case "final":
@@ -396,6 +401,8 @@ function handleTranscript(event: TranscriptEvent): void {
             flushPendingDetections(false)
             endUtterance()
             bibleDetector.reset()
+            resetSongMatcher()
+            resetSongLock()
             sttStatus.update((s) => ({ ...s, connected: false }))
             break
         case "error":
@@ -403,6 +410,8 @@ function handleTranscript(event: TranscriptEvent): void {
             flushPendingDetections(false)
             endUtterance()
             bibleDetector.reset()
+            resetSongMatcher()
+            resetSongLock()
             sttError.set(event.error || "Unknown error")
             sttStatus.update((s) => ({ ...s, connected: false }))
             break
@@ -455,4 +464,138 @@ function handleDownloadProgress(data: { modelId: string; downloaded: number; tot
         downloadProgress: data.downloaded,
         downloadTotal: data.total
     }))
+}
+
+// --- Song detection (auto-lyrics) ---
+// Runs entirely in the frontend on the same transcripts as Bible detection.
+// Suggest-first design: matches surface in the overlay list; auto-projection
+// (and the song lock that navigates slides within the projected song) only
+// happens when the user enables "Auto-project Songs".
+
+/** Dismiss a song detection. */
+export function dismissSongDetection(detectionId: string): void {
+    sttSongDetections.update((list) => list.filter((d) => d.id !== detectionId))
+}
+
+/** Clear all song detections. */
+export function clearSongDetections(): void {
+    sttSongDetections.set([])
+}
+
+function processSongTranscript(transcript: string): void {
+    const settings = get(sttSettings)
+    if (!settings.songDetection || !transcript) return
+
+    const detections = detectSongsFromTranscript(transcript)
+    const lockedSongId = getLockedSongId()
+    const differentSong = detections.find((detection) => detection.showId !== lockedSongId)
+    if (lockedSongId && differentSong) {
+        resetSongLock()
+        handleSongDetection(differentSong)
+        return
+    }
+
+    // Inside the locked song: project the matching slide instead of re-running global detection
+    const handledByLock = handleSongLockTranscript(transcript)
+    if (handledByLock) {
+        detections.forEach((detection) => handleSongDetection(detection))
+        return
+    }
+
+    detections.forEach((detection) => handleSongDetection(detection))
+}
+
+function handleSongDetection(detection: SongDetection): void {
+    const settings = get(sttSettings)
+    if (!settings.songDetection) return
+    if (detection.confidence < settings.confidenceThreshold) return
+
+    const surfacedDetection = surfaceSongDetection(detection)
+
+    if (surfacedDetection.slideIndex === undefined || !surfacedDetection.slideText) {
+        void hydrateSongDetectionSlide(surfacedDetection)
+    }
+
+    if (settings.autoShowSongs) {
+        void showSongDetection(surfacedDetection)
+    }
+}
+
+function surfaceSongDetection(detection: SongDetection): SongDetection {
+    let surfacedDetection = detection
+
+    sttSongDetections.update((list) => {
+        const duplicateIndex = list.findIndex((item) => item.showId === detection.showId && item.slideIndex === detection.slideIndex && Date.now() - item.detectedAt < 10000)
+        if (duplicateIndex >= 0) {
+            const existing = list[duplicateIndex]
+            surfacedDetection = {
+                ...existing,
+                confidence: detection.confidence,
+                matchedText: detection.matchedText || existing.matchedText,
+                source: detection.source,
+                detectedAt: detection.detectedAt,
+                slideIndex: detection.slideIndex ?? existing.slideIndex,
+                slideText: detection.slideText || existing.slideText
+            }
+
+            return [surfacedDetection, ...list.filter((_, index) => index !== duplicateIndex)].slice(0, 5)
+        }
+
+        surfacedDetection = detection
+        return [surfacedDetection, ...list].slice(0, 5)
+    })
+
+    return surfacedDetection
+}
+
+async function hydrateSongDetectionSlide(detection: SongDetection): Promise<void> {
+    const { loadShows } = await import("../components/helpers/setShow")
+    await loadShows([detection.showId])
+
+    const slideMatch = findBestSongSlide(detection.showId, detection.matchedText || detection.slideText || "")
+    if (!slideMatch) return
+
+    sttSongDetections.update((list) =>
+        list.map((item) =>
+            item.id === detection.id
+                ? {
+                      ...item,
+                      slideIndex: slideMatch.slideIndex,
+                      slideText: slideMatch.slideText,
+                      matchedText: slideMatch.matchedText
+                  }
+                : item
+        )
+    )
+}
+
+/** Project a song detection's slide and lock onto the song for slide following. */
+export async function showSongDetection(detection: SongDetection): Promise<void> {
+    const { activeShow, showsCache } = await import("../stores")
+    const { loadShows } = await import("../components/helpers/setShow")
+    const { getLayoutRef } = await import("../components/helpers/show")
+    const { setOutput } = await import("../components/helpers/output")
+    const { updateOut } = await import("../components/helpers/showActions")
+
+    activeShow.set({ id: detection.showId, type: "show" })
+
+    await loadShows([detection.showId])
+    const layout = getLayoutRef(detection.showId)
+    const activeLayout = get(showsCache)[detection.showId]?.settings?.activeLayout || ""
+    const slideMatch = detection.slideIndex === undefined ? findBestSongSlide(detection.showId, detection.matchedText || detection.slideText || "") : null
+    const slideIndex = detection.slideIndex ?? slideMatch?.slideIndex ?? 0
+    const surfacedDetection = surfaceSongDetection({
+        ...detection,
+        slideIndex,
+        slideText: detection.slideText || slideMatch?.slideText,
+        matchedText: detection.matchedText || slideMatch?.matchedText || detection.slideText || ""
+    })
+
+    if (layout[slideIndex]) {
+        setOutput("slide", { id: surfacedDetection.showId, layout: activeLayout, index: slideIndex, line: 0 })
+        updateOut(surfacedDetection.showId, slideIndex, layout, true, "", 1200)
+    }
+
+    // Lock onto this song so subsequent transcript chunks navigate verses within it.
+    void lockSong(surfacedDetection.showId, surfacedDetection.showName)
 }
