@@ -6,6 +6,15 @@
 
 import { get } from "svelte/store"
 import { shows, textCache } from "../stores"
+import { getSongSlides } from "./songMatcher"
+import { SlideFollower, type FollowerUpdate } from "./slideFollower"
+
+export interface LockTranscriptResult {
+    /** Whether the lock is still active (callers suppress global detection while true). */
+    locked: boolean
+    /** A slide change proposed by the follower, if any. */
+    update: FollowerUpdate | null
+}
 
 interface SongLock {
     showId: string
@@ -28,6 +37,7 @@ const HARD_TIMEOUT_MS = 4 * 60_000 // 4 min cap on lock without any matches
 const COMMON_LOCK_WORDS = new Set(["and", "are", "for", "from", "have", "into", "let", "not", "our", "out", "that", "the", "this", "unto", "was", "what", "when", "where", "with", "would", "you", "your"])
 
 let lock: SongLock | null = null
+const follower = new SlideFollower()
 
 export function isSongLocked(): boolean {
     return lock !== null
@@ -39,10 +49,21 @@ export function getLockedSongId(): string | null {
 
 export function resetSongLock(): void {
     lock = null
+    follower.reset()
+}
+
+/** Info about the currently locked song, for the overlay panel. */
+export function getLockInfo(): { showId: string; showName: string } | null {
+    return lock ? { showId: lock.showId, showName: lock.showName } : null
+}
+
+/** Re-base the follower after the operator (or auto-show) changes the slide. */
+export function anchorLockedSlide(slideIndex: number): void {
+    if (lock) follower.anchor(slideIndex)
 }
 
 /** Build a lock for the given show id. Pulls song lyric text from textCache. */
-export async function lockSong(showId: string, showName: string): Promise<void> {
+export async function lockSong(showId: string, showName: string, anchorSlideIndex = 0): Promise<void> {
     const allShows = get(shows)
     const show = allShows[showId]
     if (!show) {
@@ -72,6 +93,9 @@ export async function lockSong(showId: string, showName: string): Promise<void> 
         lastMatchAt: Date.now(),
         firstMismatchAt: null
     }
+
+    // Position-aware slide following within the locked song
+    follower.load(getSongSlides(showId), anchorSlideIndex)
 }
 
 /**
@@ -83,13 +107,13 @@ export async function lockSong(showId: string, showName: string): Promise<void> 
  * Returns false if there is no lock, or the lock just expired due to
  * sustained mismatch — the caller should fall back to global detection.
  */
-export function handleSongLockTranscript(transcript: string): boolean {
-    if (!lock) return false
+export function handleSongLockTranscript(transcript: string): LockTranscriptResult {
+    if (!lock) return { locked: false, update: null }
 
     // Hard timeout: if the song hasn't matched in many minutes, drop the lock.
     if (Date.now() - lock.lastMatchAt > HARD_TIMEOUT_MS) {
-        lock = null
-        return false
+        resetSongLock()
+        return { locked: false, update: null }
     }
 
     const words = transcript
@@ -99,7 +123,7 @@ export function handleSongLockTranscript(transcript: string): boolean {
         .filter((w) => w.length >= MIN_WORD_LENGTH && !COMMON_LOCK_WORDS.has(w))
 
     if (words.length < 3) {
-        return false
+        return { locked: true, update: null }
     }
 
     let hits = 0
@@ -111,20 +135,20 @@ export function handleSongLockTranscript(transcript: string): boolean {
     if (coverage >= MIN_LOCK_COVERAGE) {
         lock.lastMatchAt = Date.now()
         lock.firstMismatchAt = null
-        return true
+        return { locked: true, update: follower.feedTranscript(transcript) }
     }
 
     // Sustained mismatch tracking
     if (lock.firstMismatchAt === null) {
         lock.firstMismatchAt = Date.now()
-        return true // still locked but watching
+        return { locked: true, update: null } // still locked but watching
     }
 
     if (Date.now() - lock.firstMismatchAt >= MISMATCH_EXIT_MS) {
         // Exit the lock; allow the global detector to run on subsequent chunks.
-        lock = null
-        return false
+        resetSongLock()
+        return { locked: false, update: null }
     }
 
-    return true
+    return { locked: true, update: null }
 }

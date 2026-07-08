@@ -9,11 +9,11 @@
 
 import { get } from "svelte/store"
 import type { BibleDetection, SongDetection, SttStatus, TranscriptEvent, ModelInfo } from "../../types/Stt"
-import { sttBibleVersions, sttDetections, sttEnabled, sttError, sttModels, sttPartialTranscript, sttSettings, sttSongDetections, sttStatus, sttTranscript } from "./sttStore"
+import { sttBibleVersions, sttDetections, sttEnabled, sttError, sttModels, sttPartialTranscript, sttSettings, sttSongDetections, sttSongLockState, sttStatus, sttTranscript } from "./sttStore"
 import { installSttSettingsAutoBackup, restoreSttSettings } from "./sttSettingsBackup"
 import { BibleDetector } from "./bibleDetector"
 import { detectSongsFromTranscript, findBestSongSlide, resetSongMatcher } from "./songMatcher"
-import { getLockedSongId, handleSongLockTranscript, lockSong, resetSongLock } from "./sttSongLock"
+import { anchorLockedSlide, getLockedSongId, handleSongLockTranscript, lockSong, resetSongLock } from "./sttSongLock"
 
 const STT_CHANNEL = "STT"
 
@@ -154,7 +154,7 @@ export function stopStt(): void {
     endUtterance()
     bibleDetector.reset()
     resetSongMatcher()
-    resetSongLock()
+    unlockSong()
 
     // Stop audio capture
     if (scriptProcessor) {
@@ -472,6 +472,12 @@ function handleDownloadProgress(data: { modelId: string; downloaded: number; tot
 // (and the song lock that navigates slides within the projected song) only
 // happens when the user enables "Auto-project Songs".
 
+/** Release the song lock and clear the overlay panel. */
+export function unlockSong(): void {
+    resetSongLock()
+    sttSongLockState.set(null)
+}
+
 /** Dismiss a song detection. */
 export function dismissSongDetection(detectionId: string): void {
     sttSongDetections.update((list) => list.filter((d) => d.id !== detectionId))
@@ -490,19 +496,68 @@ function processSongTranscript(transcript: string): void {
     const lockedSongId = getLockedSongId()
     const differentSong = detections.find((detection) => detection.showId !== lockedSongId)
     if (lockedSongId && differentSong) {
-        resetSongLock()
+        // Medley / next song: the global matcher strongly identified another song
+        unlockSong()
         handleSongDetection(differentSong)
         return
     }
 
-    // Inside the locked song: project the matching slide instead of re-running global detection
-    const handledByLock = handleSongLockTranscript(transcript)
-    if (handledByLock) {
-        detections.forEach((detection) => handleSongDetection(detection))
+    // Inside the locked song: the follower tracks the slide position
+    const lockResult = handleSongLockTranscript(transcript)
+    if (!lockResult.locked && lockedSongId) {
+        // lock just expired (sustained mismatch / timeout)
+        sttSongLockState.set(null)
+    }
+    if (lockResult.locked) {
+        if (lockResult.update) applyFollowerUpdate(lockResult.update.slideIndex, lockResult.update.confidence)
         return
     }
 
     detections.forEach((detection) => handleSongDetection(detection))
+}
+
+/** A follower slide change: project it (auto mode) or surface it as a suggestion. */
+function applyFollowerUpdate(slideIndex: number, confidence: number): void {
+    const state = get(sttSongLockState)
+    if (!state) return
+
+    if (get(sttSettings).autoShowSongs) {
+        void projectLockedSlide(slideIndex)
+    } else {
+        sttSongLockState.set({ ...state, suggestedSlideIndex: slideIndex !== state.slideIndex ? slideIndex : null, confidence })
+    }
+}
+
+/** Project a slide of the locked song and re-anchor the follower on it. */
+export async function projectLockedSlide(slideIndex: number): Promise<void> {
+    const state = get(sttSongLockState)
+    if (!state) return
+
+    const { showsCache } = await import("../stores")
+    const { loadShows } = await import("../components/helpers/setShow")
+    const { getLayoutRef } = await import("../components/helpers/show")
+    const { setOutput } = await import("../components/helpers/output")
+    const { updateOut } = await import("../components/helpers/showActions")
+
+    await loadShows([state.showId])
+    const layout = getLayoutRef(state.showId)
+    if (!layout[slideIndex]) return
+
+    const activeLayout = get(showsCache)[state.showId]?.settings?.activeLayout || ""
+    setOutput("slide", { id: state.showId, layout: activeLayout, index: slideIndex, line: 0 })
+    updateOut(state.showId, slideIndex, layout, true, "", 1200)
+
+    anchorLockedSlide(slideIndex)
+    sttSongLockState.set({ ...get(sttSongLockState)!, slideIndex, suggestedSlideIndex: null })
+}
+
+/** Operator prev/next override within the locked song. */
+export async function stepLockedSlide(delta: number): Promise<void> {
+    const state = get(sttSongLockState)
+    if (!state) return
+    const target = state.slideIndex + delta
+    if (target < 0 || target >= state.slideCount) return
+    await projectLockedSlide(target)
 }
 
 function handleSongDetection(detection: SongDetection): void {
@@ -596,6 +651,14 @@ export async function showSongDetection(detection: SongDetection): Promise<void>
         updateOut(surfacedDetection.showId, slideIndex, layout, true, "", 1200)
     }
 
-    // Lock onto this song so subsequent transcript chunks navigate verses within it.
-    void lockSong(surfacedDetection.showId, surfacedDetection.showName)
+    // Lock onto this song so subsequent transcript chunks navigate slides within it.
+    await lockSong(surfacedDetection.showId, surfacedDetection.showName, slideIndex)
+    sttSongLockState.set({
+        showId: surfacedDetection.showId,
+        showName: surfacedDetection.showName,
+        slideIndex,
+        slideCount: layout.length,
+        suggestedSlideIndex: null,
+        confidence: surfacedDetection.confidence
+    })
 }

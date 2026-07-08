@@ -1,7 +1,7 @@
 <script lang="ts">
     import { onMount } from "svelte"
-    import { sttDetections, sttEnabled, sttOverlayVisible, sttMinimized, sttPartialTranscript, sttSettings, sttSettingsOpen, sttSongDetections, sttStatus, sttTranscript, sttError, sttModels } from "./sttStore"
-    import { clearBibleDetections, clearSongDetections, dismissDetection, dismissSongDetection, showSongDetection, stopStt, toggleStt, downloadModel, deleteModel, requestModels, setModel } from "./sttManager"
+    import { sttDetections, sttEnabled, sttOverlayVisible, sttMinimized, sttPartialTranscript, sttSettings, sttSettingsOpen, sttSongDetections, sttSongLockState, sttStatus, sttTranscript, sttError, sttModels } from "./sttStore"
+    import { clearBibleDetections, clearSongDetections, dismissDetection, dismissSongDetection, projectLockedSlide, showSongDetection, stepLockedSlide, stopStt, toggleStt, unlockSong, downloadModel, deleteModel, requestModels, setModel } from "./sttManager"
     import { showDetection } from "./sttScriptureHelper"
     import SttSettings from "./SttSettings.svelte"
 
@@ -182,6 +182,26 @@
 
             <!-- SONGS -->
             {#if $sttSettings.songDetection}
+                {#if $sttSongLockState}
+                    <section class="stt-section stt-lock-panel">
+                        <div class="stt-section-title-row">
+                            <span class="stt-section-title">🔒 {$sttSongLockState.showName}</span>
+                            <span class="stt-item-conf">Slide {$sttSongLockState.slideIndex + 1}/{$sttSongLockState.slideCount}</span>
+                        </div>
+                        {#if $sttSongLockState.suggestedSlideIndex !== null && $sttSongLockState.suggestedSlideIndex !== $sttSongLockState.slideIndex}
+                            <div class="stt-lock-suggestion">
+                                <span>Singing slide {$sttSongLockState.suggestedSlideIndex + 1} ({formatConfidence($sttSongLockState.confidence)})</span>
+                                <button class="stt-btn-secondary" on:click={() => projectLockedSlide($sttSongLockState?.suggestedSlideIndex ?? 0)}>Apply</button>
+                            </div>
+                        {/if}
+                        <div class="stt-item-actions">
+                            <button class="stt-btn-secondary outline" on:click={() => stepLockedSlide(-1)}>‹ Prev</button>
+                            <button class="stt-btn-secondary outline" on:click={() => stepLockedSlide(1)}>Next ›</button>
+                            <button class="stt-btn-secondary outline" on:click={unlockSong}>Unlock</button>
+                        </div>
+                    </section>
+                {/if}
+
                 <section class="stt-section results-section">
                     <div class="stt-section-title-row">
                         <span class="stt-section-title">Songs <span class="stt-badge">{$sttSongDetections.length}</span></span>
@@ -509,6 +529,24 @@
         flex: 1;
         min-height: 0;
     }
+    .stt-lock-panel {
+        border: 1px solid var(--secondary-opacity);
+        border-radius: 8px;
+        padding: 8px 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .stt-lock-suggestion {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        font-size: 0.85em;
+        color: var(--text);
+    }
+
     .stt-section-title-row {
         display: flex;
         align-items: center;

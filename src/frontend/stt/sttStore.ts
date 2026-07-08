@@ -39,6 +39,20 @@ export const sttDetections: Writable<BibleDetection[]> = writable([])
 /** Song detections (most recent first). */
 export const sttSongDetections: Writable<SongDetection[]> = writable([])
 
+/** State of the locked song's slide follower (null = no lock). */
+export interface SongLockState {
+    showId: string
+    showName: string
+    /** Slide currently projected / anchored. */
+    slideIndex: number
+    slideCount: number
+    /** Follower's proposal awaiting operator confirmation (suggest mode). */
+    suggestedSlideIndex: number | null
+    confidence: number
+}
+
+export const sttSongLockState: Writable<SongLockState | null> = writable(null)
+
 // --- Settings ---
 
 export interface SttSettingsData {

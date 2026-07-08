@@ -156,6 +156,14 @@ export function detectSongsFromTranscript(transcript: string): SongDetection[] {
     ]
 }
 
+/** Layout-ordered slide texts for a show — the input for the slide follower. */
+export function getSongSlides(showId: string): { index: number; text: string }[] {
+    const cachedEntry = catalogById.get(showId)
+    const entry = cachedEntry?.slides.length ? cachedEntry : buildCatalogEntry(showId, get(shows)[showId], get(textCache)[showId] || "")
+    if (!entry?.slides.length) return []
+    return entry.slides.map((slide) => ({ index: slide.index, text: slide.text }))
+}
+
 export function findBestSongSlide(showId: string, transcript: string, existingEntry?: SongCatalogEntry): { slideIndex: number; slideText: string; matchedText: string } | null {
     const cachedEntry = existingEntry || catalogById.get(showId)
     const entry = cachedEntry?.slides.length ? cachedEntry : buildCatalogEntry(showId, get(shows)[showId], get(textCache)[showId] || "")
