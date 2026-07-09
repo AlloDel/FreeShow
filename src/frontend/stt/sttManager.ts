@@ -9,7 +9,7 @@
 
 import { get } from "svelte/store"
 import type { BibleDetection, SongDetection, SttStatus, TranscriptEvent, ModelInfo } from "../../types/Stt"
-import { sttBibleVersions, sttDetections, sttEnabled, sttError, sttModels, sttPartialTranscript, sttSettings, sttSongDetections, sttSongLockState, sttStatus, sttTranscript } from "./sttStore"
+import { sttActiveTab, sttBibleVersions, sttDetections, sttEnabled, sttError, sttModels, sttPartialTranscript, sttSettings, sttSongDetections, sttSongLockState, sttStatus, sttTranscript } from "./sttStore"
 import { installSttSettingsAutoBackup, restoreSttSettings } from "./sttSettingsBackup"
 import { BibleDetector } from "./bibleDetector"
 import { detectSongsFromTranscript, findBestSongSlide, resetSongMatcher } from "./songMatcher"
@@ -450,6 +450,8 @@ function autoShowIfEnabled(detection: BibleDetection): void {
     if (detection.source === "contextual" && !hasExplicitVerseInSnippet(detection.transcriptSnippet)) {
         return
     }
+    // Only the active tab's detections auto-project (operator mode switch)
+    if (get(sttActiveTab) !== "bible") return
     if (settings.autoShowBible) {
         import("./sttScriptureHelper").then(({ showDetection }) => {
             showDetection(detection, settings.bibleVersionId || undefined)
@@ -524,7 +526,7 @@ function applyFollowerUpdate(slideIndex: number, confidence: number): void {
     const state = get(sttSongLockState)
     if (!state) return
 
-    if (get(sttSettings).autoShowSongs) {
+    if (get(sttSettings).autoShowSongs && get(sttActiveTab) === "songs") {
         void projectLockedSlide(slideIndex)
     } else {
         sttSongLockState.set({ ...state, suggestedSlideIndex: slideIndex !== state.slideIndex ? slideIndex : null, confidence })
@@ -574,7 +576,7 @@ function handleSongDetection(detection: SongDetection): void {
         void hydrateSongDetectionSlide(surfacedDetection)
     }
 
-    if (settings.autoShowSongs) {
+    if (settings.autoShowSongs && get(sttActiveTab) === "songs") {
         void showSongDetection(surfacedDetection)
     }
 }
@@ -653,6 +655,9 @@ export async function showSongDetection(detection: SongDetection): Promise<void>
         setOutput("slide", { id: surfacedDetection.showId, layout: activeLayout, index: slideIndex, line: 0 })
         updateOut(surfacedDetection.showId, slideIndex, layout, true, "", 1200)
     }
+
+    // Projecting a song is an explicit switch into songs mode
+    sttActiveTab.set("songs")
 
     // Lock onto this song so subsequent transcript chunks navigate slides within it.
     await lockSong(surfacedDetection.showId, surfacedDetection.showName, slideIndex)

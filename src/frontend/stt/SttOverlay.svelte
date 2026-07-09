@@ -1,6 +1,6 @@
 <script lang="ts">
     import { onMount } from "svelte"
-    import { sttDetections, sttEnabled, sttOverlayVisible, sttMinimized, sttPartialTranscript, sttSettings, sttSettingsOpen, sttSongDetections, sttSongLockState, sttStatus, sttTranscript, sttError, sttModels } from "./sttStore"
+    import { sttActiveTab, sttDetections, sttEnabled, sttOverlayVisible, sttMinimized, sttPartialTranscript, sttSettings, sttSettingsOpen, sttSongDetections, sttSongLockState, sttStatus, sttTranscript, sttError, sttModels } from "./sttStore"
     import { clearBibleDetections, clearSongDetections, dismissDetection, dismissSongDetection, projectLockedSlide, showSongDetection, stepLockedSlide, stopStt, toggleStt, unlockSong, downloadModel, deleteModel, requestModels, setModel } from "./sttManager"
     import { showDetection } from "./sttScriptureHelper"
     import SttSettings from "./SttSettings.svelte"
@@ -146,42 +146,52 @@
                 </div>
             </section>
 
+            <!-- MODE TABS -->
+            <div class="stt-tabs" role="tablist">
+                <button class="stt-tab" class:active={$sttActiveTab === "bible"} role="tab" aria-selected={$sttActiveTab === "bible"} on:click={() => sttActiveTab.set("bible")}>
+                    Bible <span class="stt-badge">{$sttDetections.length}</span>
+                </button>
+                <button class="stt-tab" class:active={$sttActiveTab === "songs"} role="tab" aria-selected={$sttActiveTab === "songs"} on:click={() => sttActiveTab.set("songs")}>
+                    Songs <span class="stt-badge">{$sttSongDetections.length}</span>
+                </button>
+            </div>
+
             <!-- RESULTS AREA -->
-            <section class="stt-section results-section">
-                <div class="stt-section-title-row">
-                    <span class="stt-section-title">Bible <span class="stt-badge">{$sttDetections.length}</span></span>
-                </div>
-
-                <div class="stt-results-container">
-                    {#if $sttDetections.length > 0}
-                        <div class="stt-results-actions">
-                            <button class="stt-btn-secondary outline" on:click={clearBibleHistory}>Clear all</button>
-                        </div>
-                        <div class="stt-list">
-                            {#each $sttDetections as detection (detection.id)}
-                                <div class="stt-list-item">
-                                    <div class="stt-item-header">
-                                        <strong class="stt-item-title">{detection.bookName} {detection.chapter}:{detection.verseStart}{detection.verseEnd ? "-" + detection.verseEnd : ""}</strong>
-                                        <span class="stt-item-conf">{formatConfidence(detection.confidence)}</span>
+            {#if $sttActiveTab === "bible"}
+                <section class="stt-section results-section">
+                    <div class="stt-results-container">
+                        {#if $sttDetections.length > 0}
+                            <div class="stt-results-actions">
+                                <button class="stt-btn-secondary outline" on:click={clearBibleHistory}>Clear all</button>
+                            </div>
+                            <div class="stt-list">
+                                {#each $sttDetections as detection (detection.id)}
+                                    <div class="stt-list-item">
+                                        <div class="stt-item-header">
+                                            <strong class="stt-item-title">{detection.bookName} {detection.chapter}:{detection.verseStart}{detection.verseEnd ? "-" + detection.verseEnd : ""}</strong>
+                                            <span class="stt-item-conf">{formatConfidence(detection.confidence)}</span>
+                                        </div>
+                                        {#if detection.transcriptSnippet}
+                                            <p class="stt-item-desc">"{detection.transcriptSnippet}"</p>
+                                        {/if}
+                                        <div class="stt-item-actions">
+                                            <button class="stt-btn-secondary outline" on:click={() => dismissDetection(detection.id)}>Dismiss</button>
+                                            <button class="stt-btn-secondary" on:click={() => handleShowVerse(detection)}>Project</button>
+                                        </div>
                                     </div>
-                                    {#if detection.transcriptSnippet}
-                                        <p class="stt-item-desc">"{detection.transcriptSnippet}"</p>
-                                    {/if}
-                                    <div class="stt-item-actions">
-                                        <button class="stt-btn-secondary outline" on:click={() => dismissDetection(detection.id)}>Dismiss</button>
-                                        <button class="stt-btn-secondary" on:click={() => handleShowVerse(detection)}>Project</button>
-                                    </div>
-                                </div>
-                            {/each}
-                        </div>
-                    {:else}
-                        <div class="stt-empty-state">Looking for scripture references...</div>
-                    {/if}
-                </div>
-            </section>
-
-            <!-- SONGS -->
-            {#if $sttSettings.songDetection}
+                                {/each}
+                            </div>
+                        {:else}
+                            <div class="stt-empty-state">Looking for scripture references...</div>
+                        {/if}
+                    </div>
+                </section>
+            {:else if !$sttSettings.songDetection}
+                <section class="stt-section results-section">
+                    <div class="stt-empty-state">Song detection is off — enable it in settings.</div>
+                </section>
+            {:else}
+                <!-- SONGS -->
                 {#if $sttSongLockState}
                     <section class="stt-section stt-lock-panel">
                         <div class="stt-section-title-row">
@@ -203,10 +213,6 @@
                 {/if}
 
                 <section class="stt-section results-section">
-                    <div class="stt-section-title-row">
-                        <span class="stt-section-title">Songs <span class="stt-badge">{$sttSongDetections.length}</span></span>
-                    </div>
-
                     <div class="stt-results-container">
                         {#if $sttSongDetections.length > 0}
                             <div class="stt-results-actions">
@@ -529,6 +535,44 @@
         flex: 1;
         min-height: 0;
     }
+    .stt-tabs {
+        display: flex;
+        gap: 4px;
+        padding: 2px;
+        background: var(--primary-darkest);
+        border: 1px solid var(--primary-lighter);
+        border-radius: 8px;
+    }
+
+    .stt-tab {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 6px 10px;
+        border: none;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--text);
+        opacity: 0.65;
+        font-size: 0.85em;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+
+    .stt-tab:hover {
+        background: var(--hover);
+        opacity: 0.9;
+    }
+
+    .stt-tab.active {
+        background: var(--primary);
+        opacity: 1;
+        box-shadow: inset 0 0 0 1px var(--secondary-opacity);
+    }
+
     .stt-lock-panel {
         border: 1px solid var(--secondary-opacity);
         border-radius: 8px;

@@ -99,5 +99,9 @@ export const sttSettingsOpen: Writable<boolean> = writable(false)
 /** Whether the overlay is minimized. */
 export const sttMinimized: Writable<boolean> = writable(false)
 
+/** Which detection mode the operator has selected. Gates auto-projection: only the
+ * active tab's detections may project automatically (manual buttons always work). */
+export const sttActiveTab: Writable<"bible" | "songs"> = writable("bible")
+
 /** Error message to display to the user. */
 export const sttError: Writable<string> = writable("")
