@@ -46,6 +46,8 @@ interface PhraseMatch {
 }
 
 const MAX_HISTORY_WORDS = 64
+/** Heard words expire — a song change must not fight the previous song's lyrics. */
+const HISTORY_MAX_AGE_MS = 20_000
 const QUERY_WINDOW_SPECS = [
     { size: 14, weight: 1 },
     { size: 10, weight: 0.8 },
@@ -69,6 +71,7 @@ let catalogById = new Map<string, SongCatalogEntry>()
 let catalogWordIndex = new Map<string, Set<string>>()
 
 let historyWords: string[] = []
+let historyTimes: number[] = []
 let lastWindowWords: string[] = []
 let leaderShowId = ""
 let leaderStreak = 0
@@ -76,6 +79,7 @@ const lastEmitAt = new Map<string, number>()
 
 export function resetSongMatcher(): void {
     historyWords = []
+    historyTimes = []
     lastWindowWords = []
     leaderShowId = ""
     leaderStreak = 0
@@ -286,12 +290,27 @@ function getItemText(item: Item): string {
 }
 
 function appendTranscriptWindow(words: string[]): void {
+    const now = Date.now()
+
+    // expire words older than the age window (previous song / stale phrases)
+    let firstFresh = 0
+    while (firstFresh < historyTimes.length && now - historyTimes[firstFresh] > HISTORY_MAX_AGE_MS) firstFresh++
+    if (firstFresh > 0) {
+        historyWords = historyWords.slice(firstFresh)
+        historyTimes = historyTimes.slice(firstFresh)
+    }
+
     const overlap = getWordOverlap(historyWords, words)
     const nextWords = overlap > 0 ? words.slice(overlap) : words
 
     if (!nextWords.length && isSameWords(words, lastWindowWords)) return
 
-    historyWords = [...historyWords, ...nextWords].slice(-MAX_HISTORY_WORDS)
+    historyWords = [...historyWords, ...nextWords]
+    historyTimes = [...historyTimes, ...nextWords.map(() => now)]
+    if (historyWords.length > MAX_HISTORY_WORDS) {
+        historyWords = historyWords.slice(-MAX_HISTORY_WORDS)
+        historyTimes = historyTimes.slice(-MAX_HISTORY_WORDS)
+    }
     lastWindowWords = words
 }
 
