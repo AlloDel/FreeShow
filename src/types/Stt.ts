@@ -77,6 +77,8 @@ export interface ModelInfo {
     description: string
     downloaded: boolean
     active: boolean
+    /** "finals" models decode completed utterances only and cannot be the main streaming model. */
+    role?: "finals"
 }
 
 /** STT start message payload. */
@@ -84,6 +86,8 @@ export interface SttStartPayload {
     modelId?: string
     /** Opt-in diagnostics: keep the session's last minutes of mic audio, saved on stop. */
     recordSession?: boolean
+    /** Re-decode completed utterances with the Whisper finals model (best accuracy, incl. singing). */
+    whisperFinals?: boolean
 }
 
 /** Bible book reference data. */

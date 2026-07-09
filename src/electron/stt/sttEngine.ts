@@ -15,7 +15,7 @@
 
 import { EventEmitter } from "events"
 import type { TranscriptEvent } from "../../types/Stt"
-import type { SherpaModelPaths } from "./modelManager"
+import type { SherpaModelPaths, WhisperModelPaths } from "./modelManager"
 
 const SAMPLE_RATE = 16000
 
@@ -27,11 +27,14 @@ const FINALIZE_PAD_SAMPLES = 8000
 const VAD_MIN_SILENCE = 0.6
 /** Force-close very long utterances so finals keep flowing during continuous speech (seconds). */
 const VAD_MAX_SPEECH = 20
+/** Whisper re-decode is skipped for segments longer than this (decode blocks the process). */
+const WHISPER_MAX_SEGMENT_SAMPLES = 12 * SAMPLE_RATE
 
 export class SttEngine extends EventEmitter {
     isRunning = false
     private recognizer: any = null
     private fallbackRecognizer: any = null
+    private whisperRecognizer: any = null
     private vad: any = null
     private liveStream: any = null
     private lastPartial = ""
@@ -42,7 +45,7 @@ export class SttEngine extends EventEmitter {
     private utteranceAudioSamples = 0
 
     /** Create the recognizer + VAD and start accepting audio. Throws if the addon or models fail to load. */
-    start(paths: SherpaModelPaths, vadModelPath: string, fallbackPaths?: SherpaModelPaths | null): void {
+    start(paths: SherpaModelPaths, vadModelPath: string, fallbackPaths?: SherpaModelPaths | null, whisperPaths?: WhisperModelPaths | null): void {
         // Lazy require so the app still boots on platforms where the addon fails to load
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         const sherpa = require("sherpa-onnx-node")
@@ -66,6 +69,23 @@ export class SttEngine extends EventEmitter {
         // Large transducers sometimes emit NOTHING for short isolated utterances
         // ("next", "eight") — a smaller model re-decodes those as a safety net.
         this.fallbackRecognizer = fallbackPaths ? makeRecognizer(fallbackPaths) : null
+
+        // Optional Whisper finals decoder: re-decodes each completed utterance with a
+        // model trained on web audio (incl. music) — far better on singing and dense
+        // speech. Partials stay on the streaming model for latency.
+        this.whisperRecognizer = whisperPaths
+            ? new sherpa.OfflineRecognizer({
+                  featConfig: { sampleRate: SAMPLE_RATE, featureDim: 80 },
+                  modelConfig: {
+                      whisper: { encoder: whisperPaths.encoder, decoder: whisperPaths.decoder },
+                      tokens: whisperPaths.tokens,
+                      numThreads: 2,
+                      provider: "cpu",
+                      debug: 0
+                  },
+                  decodingMethod: "greedy_search"
+              })
+            : null
 
         this.vad = new sherpa.Vad(
             {
@@ -154,6 +174,7 @@ export class SttEngine extends EventEmitter {
         this.isRunning = false
         this.recognizer = null
         this.fallbackRecognizer = null
+        this.whisperRecognizer = null
         this.vad = null
         this.resetState()
         this.emitTranscript({ type: "disconnected" })
@@ -169,6 +190,12 @@ export class SttEngine extends EventEmitter {
         while (this.recognizer.isReady(this.liveStream)) this.recognizer.decode(this.liveStream)
 
         let text: string = (this.recognizer.getResult(this.liveStream).text || "").trim()
+
+        // Whisper finals: re-decode the utterance audio for maximum word accuracy
+        if (this.whisperRecognizer && this.utteranceAudioSamples > 0 && this.utteranceAudioSamples <= WHISPER_MAX_SEGMENT_SAMPLES) {
+            const whisperText = this.decodeWithWhisper()
+            if (whisperText) text = whisperText
+        }
 
         // Main model heard nothing — let the fallback model try the same audio
         if (!text && this.fallbackRecognizer && this.utteranceAudioSamples > 0) {
@@ -191,6 +218,19 @@ export class SttEngine extends EventEmitter {
         while (this.utteranceAudioSamples > VAD_MAX_SPEECH * SAMPLE_RATE && this.utteranceAudio.length > 1) {
             this.utteranceAudioSamples -= this.utteranceAudio.shift()!.length
         }
+    }
+
+    private decodeWithWhisper(): string {
+        const merged = new Float32Array(this.utteranceAudioSamples)
+        let offset = 0
+        for (const chunk of this.utteranceAudio) {
+            merged.set(chunk, offset)
+            offset += chunk.length
+        }
+        const stream = this.whisperRecognizer.createStream()
+        stream.acceptWaveform({ sampleRate: SAMPLE_RATE, samples: merged })
+        this.whisperRecognizer.decode(stream)
+        return (this.whisperRecognizer.getResult(stream).text || "").trim()
     }
 
     private decodeWithFallback(): string {

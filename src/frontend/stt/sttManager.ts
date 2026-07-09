@@ -124,7 +124,7 @@ export async function startStt(): Promise<void> {
         mutedMonitor.connect(audioContext.destination)
 
         // Tell electron to start the whisper engine
-        sendStt("START", { modelId: settings.model, recordSession: settings.recordSession })
+        sendStt("START", { modelId: settings.model, recordSession: settings.recordSession, whisperFinals: settings.whisperFinals })
     } catch (err) {
         console.error("[STT] Audio setup failed:", err)
 

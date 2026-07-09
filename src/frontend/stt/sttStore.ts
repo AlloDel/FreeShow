@@ -68,6 +68,8 @@ export interface SttSettingsData {
     autoShowSongs: boolean
     /** Diagnostics: record the session's last minutes of mic audio (saved on stop). */
     recordSession: boolean
+    /** Re-decode completed utterances with Whisper (best accuracy, incl. singing). */
+    whisperFinals: boolean
 }
 
 export const sttSettings: Writable<SttSettingsData> = writable({
@@ -78,7 +80,8 @@ export const sttSettings: Writable<SttSettingsData> = writable({
     bibleVersionId: "",
     songDetection: false,
     autoShowSongs: false,
-    recordSession: false
+    recordSession: false,
+    whisperFinals: false
 })
 
 // --- Models ---

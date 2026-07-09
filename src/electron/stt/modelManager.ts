@@ -15,6 +15,12 @@ export interface SherpaModelPaths {
     tokens: string
 }
 
+export interface WhisperModelPaths {
+    encoder: string
+    decoder: string
+    tokens: string
+}
+
 interface SttModelDef extends Omit<ModelInfo, "downloaded" | "active"> {
     baseUrl: string
     files: { encoder: string; decoder: string; joiner: string; tokens: string }
@@ -62,6 +68,35 @@ function getModelDef(modelId: string): SttModelDef | null {
     return MODELS.find((m) => m.id === modelId) || null
 }
 
+// --- Whisper finals decoder (optional, high accuracy on speech AND singing) ---
+
+const WHISPER_FINALS = {
+    id: "whisper-small-en",
+    displayName: "Whisper finals (small.en)",
+    size: 375_500_000,
+    description: "High-accuracy decoder for utterance finals and lyrics (~375 MB)",
+    baseUrl: "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-small.en/resolve/main",
+    files: {
+        encoder: "small.en-encoder.int8.onnx",
+        decoder: "small.en-decoder.int8.onnx",
+        tokens: "small.en-tokens.txt"
+    }
+}
+
+/** Absolute paths to the Whisper finals model, or null if not downloaded. */
+export function getWhisperFinalsPaths(): WhisperModelPaths | null {
+    const dir = path.join(getModelsDir(), WHISPER_FINALS.id)
+    const paths = {
+        encoder: path.join(dir, WHISPER_FINALS.files.encoder),
+        decoder: path.join(dir, WHISPER_FINALS.files.decoder),
+        tokens: path.join(dir, WHISPER_FINALS.files.tokens)
+    }
+    for (const p of Object.values(paths)) {
+        if (!fs.existsSync(p) || fs.statSync(p).size === 0) return null
+    }
+    return paths
+}
+
 // --- Silero VAD model (speech gating; tiny, shared by all ASR models) ---
 
 const VAD_MODEL_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
@@ -107,11 +142,14 @@ export function getModelPaths(modelId: string): SherpaModelPaths | null {
 }
 
 export function getModels(): ModelInfo[] {
-    return MODELS.map(({ baseUrl, files, ...info }) => ({
+    const list: ModelInfo[] = MODELS.map(({ baseUrl, files, ...info }) => ({
         ...info,
         downloaded: isModelDownloaded(info.id),
         active: info.id === activeModelId
     }))
+    const { baseUrl, files, ...whisperInfo } = WHISPER_FINALS
+    list.push({ ...whisperInfo, role: "finals", downloaded: getWhisperFinalsPaths() !== null, active: false })
+    return list
 }
 
 export function setActiveModel(modelId: string): boolean {
@@ -125,7 +163,7 @@ export function getActiveModelId(): string {
 }
 
 export function deleteModel(modelId: string): void {
-    const def = getModelDef(modelId)
+    const def = getModelDef(modelId) || (modelId === WHISPER_FINALS.id ? WHISPER_FINALS : null)
     if (!def) return
     const dir = path.join(getModelsDir(), def.id)
     if (fs.existsSync(dir)) {
@@ -140,9 +178,9 @@ export function deleteModel(modelId: string): void {
 
 /** Download all files of a model with aggregate progress reporting. */
 export async function downloadModel(modelId: string, onProgress?: (downloaded: number, total: number) => void): Promise<void> {
-    const def = getModelDef(modelId)
+    const def = getModelDef(modelId) || (modelId === WHISPER_FINALS.id ? WHISPER_FINALS : null)
     if (!def) throw new Error(`Unknown model: ${modelId}`)
-    if (isModelDownloaded(modelId)) return
+    if (modelId === WHISPER_FINALS.id ? getWhisperFinalsPaths() !== null : isModelDownloaded(modelId)) return
 
     const dir = path.join(getModelsDir(), def.id)
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })

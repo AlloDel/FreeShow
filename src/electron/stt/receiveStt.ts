@@ -8,7 +8,7 @@ import fs from "fs"
 import path from "path"
 import type { SttMessage, SttStartPayload, TranscriptEvent } from "../../types/Stt"
 import { toApp } from "../index"
-import { deleteModel, downloadModel, ensureVadModel, getActiveModelId, getModelPaths, getModels, setActiveModel } from "./modelManager"
+import { deleteModel, downloadModel, ensureVadModel, getActiveModelId, getModelPaths, getModels, getWhisperFinalsPaths, setActiveModel } from "./modelManager"
 import { SttEngine } from "./sttEngine"
 
 let engine: SttEngine | null = null
@@ -154,6 +154,12 @@ async function startStt(payload: SttStartPayload): Promise<void> {
         const vadModelPath = await ensureVadModel()
         // Small model as a safety net for short utterances the large model ignores
         const fallbackPaths = modelId !== "zipformer-en-int8" ? getModelPaths("zipformer-en-int8") : null
+
+        let whisperPaths = null
+        if (payload?.whisperFinals) {
+            whisperPaths = getWhisperFinalsPaths()
+            if (!whisperPaths) sendToApp("TRANSCRIPT", { type: "error", error: "Whisper finals model not downloaded. Download it in settings." })
+        }
         engine = new SttEngine()
         engine.on("transcript", (event: TranscriptEvent) => {
             sendToApp("TRANSCRIPT", event)
@@ -161,7 +167,7 @@ async function startStt(payload: SttStartPayload): Promise<void> {
             // module-level reference so status reports (e.g. modelLoaded) reflect reality.
             if ((event.type === "error" || event.type === "disconnected") && engine && !engine.isRunning) engine = null
         })
-        engine.start(paths, vadModelPath, fallbackPaths)
+        engine.start(paths, vadModelPath, fallbackPaths, whisperPaths)
         setActiveModel(modelId)
         sendStatus()
         console.log(`[STT] Started with model: ${modelId}`)

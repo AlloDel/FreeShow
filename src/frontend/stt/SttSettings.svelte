@@ -56,6 +56,10 @@
         sttSettings.update((s) => ({ ...s, recordSession: !s.recordSession }))
     }
 
+    function toggleWhisperFinals() {
+        sttSettings.update((s) => ({ ...s, whisperFinals: !s.whisperFinals }))
+    }
+
     function handleDownload(modelId: string) {
         downloadModel(modelId)
     }
@@ -66,6 +70,8 @@
         }
     }
 
+    $: mainModels = $sttModels.filter((m) => m.role !== "finals")
+    $: whisperModel = $sttModels.find((m) => m.role === "finals")
     $: activeModel = $sttModels.find((m) => m.id === $sttSettings.model)
     $: currentModelDownloaded = activeModel?.downloaded || false
     $: downloadPercent = $sttStatus.downloadTotal > 0 ? Math.round(($sttStatus.downloadProgress / $sttStatus.downloadTotal) * 100) : 0
@@ -87,10 +93,10 @@
             {/if}
         </div>
         <select class="stt-select" value={$sttSettings.model} on:change={handleModelChange}>
-            {#each $sttModels as model}
+            {#each mainModels as model}
                 <option value={model.id}>{model.downloaded ? "✓ " : ""}{model.displayName} — {model.description}</option>
             {/each}
-            {#if $sttModels.length === 0}
+            {#if mainModels.length === 0}
                 <option value="small.en">Small (EN)</option>
             {/if}
         </select>
@@ -137,6 +143,17 @@
         <label class="stt-setting-label" for="auto-show-songs">Auto-project Songs</label>
         <input type="checkbox" id="auto-show-songs" class="stt-checkbox" checked={$sttSettings.autoShowSongs} disabled={!$sttSettings.songDetection} on:change={toggleSongAutoShow} />
     </div>
+
+    {#if whisperModel}
+        <div class="stt-setting-row">
+            <label class="stt-setting-label" for="whisper-finals" title="Re-decodes each finished utterance with Whisper — best word accuracy, including singing. Adds ~1-3s to finals; live partials are unaffected.">Whisper finals (best accuracy)</label>
+            {#if whisperModel.downloaded}
+                <input type="checkbox" id="whisper-finals" class="stt-checkbox" checked={$sttSettings.whisperFinals} on:change={toggleWhisperFinals} />
+            {:else if !$sttStatus.isDownloading}
+                <button class="stt-btn-download" on:click={() => whisperModel && handleDownload(whisperModel.id)}>Download (~375 MB)</button>
+            {/if}
+        </div>
+    {/if}
 
     <div class="stt-setting-row header-like">Diagnostics</div>
 
