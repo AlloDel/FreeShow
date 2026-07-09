@@ -197,8 +197,10 @@ export class SttEngine extends EventEmitter {
             if (whisperText) text = whisperText
         }
 
-        // Main model heard nothing — let the fallback model try the same audio
-        if (!text && this.fallbackRecognizer && this.utteranceAudioSamples > 0) {
+        // Main model heard nothing — let the fallback model try the same audio.
+        // Skipped when Whisper already re-decoded: its verdict is more reliable,
+        // and the small model tends to hallucinate on instrumental segments.
+        if (!text && !this.whisperRecognizer && this.fallbackRecognizer && this.utteranceAudioSamples > 0) {
             text = this.decodeWithFallback()
             if (text) console.log(`[STT] Fallback model recovered: "${text}"`)
         }
@@ -230,7 +232,8 @@ export class SttEngine extends EventEmitter {
         const stream = this.whisperRecognizer.createStream()
         stream.acceptWaveform({ sampleRate: SAMPLE_RATE, samples: merged })
         this.whisperRecognizer.decode(stream)
-        return (this.whisperRecognizer.getResult(stream).text || "").trim()
+        const text = (this.whisperRecognizer.getResult(stream).text || "").trim()
+        return cleanWhisperText(text)
     }
 
     private decodeWithFallback(): string {
@@ -253,4 +256,22 @@ export class SttEngine extends EventEmitter {
     private emitTranscript(event: TranscriptEvent): void {
         this.emit("transcript", event)
     }
+}
+
+/**
+ * Whisper hallucinates annotations on non-vocal audio ("[MUSIC PLAYING]",
+ * "R-R-R-R-R", "byeeeeee") — strip them so they never reach the detectors.
+ */
+function cleanWhisperText(text: string): string {
+    const cleaned = text
+        .replace(/\[[^\]]*\]/g, " ") // bracketed annotations
+        .replace(/\([^)]*\)/g, " ") // parenthesized annotations
+        .replace(/\b(\w{1,2})(?:-\1){2,}\b/gi, " ") // stutter runs: R-R-R-R
+        .replace(/\b\w*(\w)\1{4,}\w*\b/g, " ") // stretched chars: byeeeeee
+        .replace(/\s+/g, " ")
+        .trim()
+
+    // an utterance that was ONLY annotations/junk is silence, not speech
+    if (!/[a-z]{2,}/i.test(cleaned)) return ""
+    return cleaned
 }
