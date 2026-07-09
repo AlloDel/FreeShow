@@ -2,7 +2,7 @@ import { get } from "svelte/store"
 import { uid } from "uid"
 import type { SongDetection } from "../../types/Stt"
 import type { Item, ShowList, Slide, TrimmedShows } from "../../types/Show"
-import { shows, showsCache, textCache } from "../stores"
+import { activeProject, projects, shows, showsCache, textCache } from "../stores"
 import { formatSearch } from "../utils/search"
 
 interface SongCatalogEntry {
@@ -48,6 +48,9 @@ interface PhraseMatch {
 const MAX_HISTORY_WORDS = 64
 /** Heard words expire — a song change must not fight the previous song's lyrics. */
 const HISTORY_MAX_AGE_MS = 20_000
+/** Songs in the active project (the setlist) get a scoring head start — the operator's
+ * plan is the same prior a human uses, and it makes planned songs identify near-instantly. */
+const SETLIST_BOOST = 0.12
 const QUERY_WINDOW_SPECS = [
     { size: 14, weight: 1 },
     { size: 10, weight: 0.8 },
@@ -126,9 +129,10 @@ export function detectSongsFromTranscript(transcript: string): SongDetection[] {
         leaderStreak = 1
     }
 
+    const setlistBoost = getSetlistShowIds().has(best.entry.show.id) ? SETLIST_BOOST : 0
     const streakBoost = Math.min(0.14, Math.max(leaderStreak - 1, 0) * 0.06)
     const marginBoost = second ? Math.min(0.08, Math.max(best.baseConfidence - second.baseConfidence, 0) * 0.25) : 0.08
-    const confidence = Math.min(0.99, best.baseConfidence + streakBoost + marginBoost)
+    const confidence = Math.min(0.99, best.baseConfidence + streakBoost + marginBoost + setlistBoost)
     const confidenceMargin = second ? best.baseConfidence - second.baseConfidence : best.baseConfidence
 
     const hasStrongLyricPhrase = best.phrase.words >= 3 && best.phrase.source === "lyrics"
@@ -136,7 +140,10 @@ export function detectSongsFromTranscript(transcript: string): SongDetection[] {
     const hasStableCoverage = best.coverage >= MIN_COVERAGE && best.queryMatches >= 2 && leaderStreak >= 2
     const hasEarlyClearCoverage = best.coverage >= 0.44 && best.queryMatches >= 2 && confidenceMargin >= 0.08 && (best.phrase.source === "lyrics" || best.phrase.words >= 2)
     const hasStrongTitleMatch = best.phrase.source === "title" && (best.phrase.words >= 2 || best.coverage >= 0.45)
-    if (!hasStrongLyricPhrase && !hasImmediateCoverage && !hasStableCoverage && !hasEarlyClearCoverage && !hasStrongTitleMatch) return []
+    // The operator's setlist is a strong prior — planned songs may surface on thinner
+    // first-line evidence (they only become suggestions unless auto-project is on)
+    const hasSetlistEarlyMatch = setlistBoost > 0 && best.coverage >= 0.3 && best.queryMatches >= 1 && best.phrase.words >= 2
+    if (!hasStrongLyricPhrase && !hasImmediateCoverage && !hasStableCoverage && !hasEarlyClearCoverage && !hasStrongTitleMatch && !hasSetlistEarlyMatch) return []
     if (confidence < MIN_CONFIDENCE) return []
 
     const slideMatch = findBestSongSlide(best.entry.show.id, best.phrase.text || best.matchedQuery.text || historyWords.slice(-12).join(" "), best.entry)
@@ -287,6 +294,14 @@ function getItemText(item: Item): string {
         .join(" ")
     const listText = (item.list?.items || []).map((listItem) => listItem.text || "").join(" ")
     return `${lineText} ${listText}`.trim()
+}
+
+/** Show ids in the currently open project — the operator's setlist. */
+function getSetlistShowIds(): Set<string> {
+    const projectId = get(activeProject)
+    const project = projectId ? get(projects)[projectId] : null
+    if (!project?.shows?.length) return new Set()
+    return new Set(project.shows.filter((item: any) => !item.type || item.type === "show").map((item: any) => item.id))
 }
 
 function appendTranscriptWindow(words: string[]): void {
