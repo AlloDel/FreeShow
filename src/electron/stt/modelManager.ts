@@ -29,19 +29,6 @@ interface SttModelDef extends Omit<ModelInfo, "downloaded" | "active"> {
 /** Streaming transducer models, English. int8 quantization keeps CPU load low. */
 const MODELS: SttModelDef[] = [
     {
-        id: "zipformer-en-int8",
-        displayName: "English (fast)",
-        size: 73_440_000,
-        description: "Small streaming model, fastest on CPU (~73 MB)",
-        baseUrl: "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26/resolve/main",
-        files: {
-            encoder: "encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx",
-            decoder: "decoder-epoch-99-avg-1-chunk-16-left-128.onnx",
-            joiner: "joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx",
-            tokens: "tokens.txt"
-        }
-    },
-    {
         id: "nemotron-en-int8",
         displayName: "English (high accuracy)",
         size: 661_920_000,

@@ -43,8 +43,11 @@
     function toggleSongDetection() {
         sttSettings.update((s) => {
             const songDetection = !s.songDetection
+            // Singing is only intelligible to the Whisper finals decoder — enabling
+            // song detection turns it on automatically when the model is available.
+            const whisperFinals = songDetection && whisperModel?.downloaded ? true : s.whisperFinals
             // suggest-first: disabling detection also disables auto-projection
-            return { ...s, songDetection, autoShowSongs: songDetection ? s.autoShowSongs : false }
+            return { ...s, songDetection, whisperFinals, autoShowSongs: songDetection ? s.autoShowSongs : false }
         })
     }
 
@@ -146,7 +149,7 @@
 
     {#if whisperModel}
         <div class="stt-setting-row">
-            <label class="stt-setting-label" for="whisper-finals" title="Re-decodes each finished utterance with Whisper — best word accuracy, including singing. Adds ~1-3s to finals; live partials are unaffected.">Whisper finals (best accuracy)</label>
+            <label class="stt-setting-label" for="whisper-finals" title="Re-decodes each finished utterance with Whisper — best word accuracy, and the only model that can hear singing. Adds ~1-3s to finals; live partials are unaffected.">Whisper finals (required for songs)</label>
             {#if whisperModel.downloaded}
                 <input type="checkbox" id="whisper-finals" class="stt-checkbox" checked={$sttSettings.whisperFinals} on:change={toggleWhisperFinals} />
             {:else if !$sttStatus.isDownloading}

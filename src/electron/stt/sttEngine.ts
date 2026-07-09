@@ -33,7 +33,6 @@ const WHISPER_MAX_SEGMENT_SAMPLES = 12 * SAMPLE_RATE
 export class SttEngine extends EventEmitter {
     isRunning = false
     private recognizer: any = null
-    private fallbackRecognizer: any = null
     private whisperRecognizer: any = null
     private vad: any = null
     private liveStream: any = null
@@ -45,7 +44,7 @@ export class SttEngine extends EventEmitter {
     private utteranceAudioSamples = 0
 
     /** Create the recognizer + VAD and start accepting audio. Throws if the addon or models fail to load. */
-    start(paths: SherpaModelPaths, vadModelPath: string, fallbackPaths?: SherpaModelPaths | null, whisperPaths?: WhisperModelPaths | null): void {
+    start(paths: SherpaModelPaths, vadModelPath: string, whisperPaths?: WhisperModelPaths | null): void {
         // Lazy require so the app still boots on platforms where the addon fails to load
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         const sherpa = require("sherpa-onnx-node")
@@ -66,9 +65,6 @@ export class SttEngine extends EventEmitter {
             })
 
         this.recognizer = makeRecognizer(paths)
-        // Large transducers sometimes emit NOTHING for short isolated utterances
-        // ("next", "eight") — a smaller model re-decodes those as a safety net.
-        this.fallbackRecognizer = fallbackPaths ? makeRecognizer(fallbackPaths) : null
 
         // Optional Whisper finals decoder: re-decodes each completed utterance with a
         // model trained on web audio (incl. music) — far better on singing and dense
@@ -173,7 +169,6 @@ export class SttEngine extends EventEmitter {
 
         this.isRunning = false
         this.recognizer = null
-        this.fallbackRecognizer = null
         this.whisperRecognizer = null
         this.vad = null
         this.resetState()
@@ -195,14 +190,6 @@ export class SttEngine extends EventEmitter {
         if (this.whisperRecognizer && this.utteranceAudioSamples > 0 && this.utteranceAudioSamples <= WHISPER_MAX_SEGMENT_SAMPLES) {
             const whisperText = this.decodeWithWhisper()
             if (whisperText) text = whisperText
-        }
-
-        // Main model heard nothing — let the fallback model try the same audio.
-        // Skipped when Whisper already re-decoded: its verdict is more reliable,
-        // and the small model tends to hallucinate on instrumental segments.
-        if (!text && !this.whisperRecognizer && this.fallbackRecognizer && this.utteranceAudioSamples > 0) {
-            text = this.decodeWithFallback()
-            if (text) console.log(`[STT] Fallback model recovered: "${text}"`)
         }
 
         if (text) this.emitTranscript({ type: "final", transcript: text })
@@ -234,14 +221,6 @@ export class SttEngine extends EventEmitter {
         this.whisperRecognizer.decode(stream)
         const text = (this.whisperRecognizer.getResult(stream).text || "").trim()
         return cleanWhisperText(text)
-    }
-
-    private decodeWithFallback(): string {
-        const stream = this.fallbackRecognizer.createStream()
-        for (const chunk of this.utteranceAudio) stream.acceptWaveform({ sampleRate: SAMPLE_RATE, samples: chunk })
-        stream.acceptWaveform({ sampleRate: SAMPLE_RATE, samples: new Float32Array(FINALIZE_PAD_SAMPLES) })
-        while (this.fallbackRecognizer.isReady(stream)) this.fallbackRecognizer.decode(stream)
-        return (this.fallbackRecognizer.getResult(stream).text || "").trim()
     }
 
     private resetState(): void {

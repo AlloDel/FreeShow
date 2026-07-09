@@ -7,7 +7,7 @@ or auto-show — that logic lives entirely in the frontend (see `src/frontend/st
 ## Engine
 
 Transcription is done by [`sherpa-onnx-node`](https://github.com/k2-fsa/sherpa-onnx), running a
-**streaming zipformer transducer** model fully offline/on-device (no network calls once the model
+**streaming transducer** model fully offline/on-device (no network calls once the model
 is downloaded, no cloud API keys).
 
 - `sttEngine.ts` — thin wrapper around `sherpa.OnlineRecognizer`. Consumes 16 kHz mono
@@ -29,15 +29,14 @@ Models are managed by `modelManager.ts` and stored under:
 <userData>/stt-models/<modelId>/
 ```
 
-(e.g. `~/Library/Application Support/FreeShow/stt-models/zipformer-en-int8/` on macOS). They are
+(e.g. `~/Library/Application Support/FreeShow/stt-models/nemotron-en-int8/` on macOS). They are
 **never committed to the repo** and are fetched at runtime from Hugging Face on first use.
 
 The models currently defined are:
 
-| id                  | description                                                                             | size    |
-| ------------------- | --------------------------------------------------------------------------------------- | ------- |
-| `zipformer-en-int8` | Streaming English zipformer transducer, int8 quantized encoder/joiner for low CPU load  | ~73 MB  |
-| `nemotron-en-int8`  | NVIDIA Nemotron 0.6B streaming transducer (int8), best accuracy, casing and punctuation | ~662 MB |
+| id                 | description                                                                             | size    |
+| ------------------ | --------------------------------------------------------------------------------------- | ------- |
+| `nemotron-en-int8` | NVIDIA Nemotron 0.6B streaming transducer (int8), best accuracy, casing and punctuation | ~662 MB |
 
 A model is considered "downloaded" only when all four of its files (`encoder`, `decoder`,
 `joiner`, `tokens`) exist and are non-empty; `getModelPaths()` returns `null` otherwise, and

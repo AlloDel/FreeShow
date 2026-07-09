@@ -73,7 +73,7 @@ export interface SttSettingsData {
 }
 
 export const sttSettings: Writable<SttSettingsData> = writable({
-    model: "zipformer-en-int8",
+    model: "nemotron-en-int8",
     autoShowBible: false,
     confidenceThreshold: 0.85,
     microphoneId: "",
