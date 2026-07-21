@@ -4,10 +4,9 @@ This folder owns everything the Electron STT engine (`src/electron/stt/`) does n
 capture, the Bible-reference detector, the Svelte UI (overlay/settings/toggle), and wiring
 detections into FreeShow's existing scripture-display pipeline.
 
-**This path is bible-only.** Song/lyrics auto-follow lives on `feature/stt-auto-lyrics` and is
-not wired here. **All Bible detection is frontend-only** — the Electron side is a pure
-speech-to-text transcriber with no concept of scripture; every reference-parsing decision is
-made in `bibleDetector.ts` (covered by unit tests in `bibleDetector.test.ts`).
+**All Bible detection is frontend-only.** The Electron side is a pure speech-to-text transcriber
+(NVIDIA Nemotron via sherpa-onnx) with no concept of scripture; every reference-parsing decision
+is made in `bibleDetector.ts` (covered by unit tests in `bibleDetector.test.ts`).
 
 ## Data flow
 
@@ -18,8 +17,8 @@ made in `bibleDetector.ts` (covered by unit tests in `bibleDetector.test.ts`).
  AudioWorklet (sttManager.ts)
      │  16 kHz mono PCM, Int16, 1024-sample chunks (~64 ms)
      ▼
- IPC "STT" / AUDIO_DATA  ──────────────►  Electron: SttEngine (sherpa-onnx Nemotron/Zipformer)
-                                                │  Silero VAD + optional bible hotwords
+ IPC "STT" / AUDIO_DATA  ──────────────►  Electron: SttEngine (sherpa-onnx Nemotron)
+                                                │  Silero VAD + bible reference hotwords
      ◄────────────────────────────────────────┘
  IPC "STT" / TRANSCRIPT
      │  { type: "partial" | "final", transcript }
@@ -66,7 +65,7 @@ Spoken numbers ("fifty three", "sixteen") and mixed digit/word forms are normali
 abbreviations are intentionally excluded from spoken matching.
 
 Reference feedwords (book names + chapter/verse) live in `BIBLE_REFERENCE_FEEDWORDS` and are
-mirrored into the Electron hotwords file — **not** verse text or song vocabulary.
+mirrored into the Electron hotwords file — **not** verse text content (that causes hallucinations).
 
 ## Auto-show gating
 

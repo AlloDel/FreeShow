@@ -86,11 +86,9 @@ export const BIBLE_BOOKS: BookEntry[] = [
  *
  * Used as documentation/source-of-truth for the Electron hotwords file
  * (`src/electron/stt/bibleHotwords.ts`). Keep this list REFERENCE-ONLY —
- * do not add verse text or song/worship lyrics (those cause hallucinations).
+ * do not add verse text content (that causes hallucinations).
  *
- * Streaming transducers (Nemotron / Zipformer) consume these via sherpa-onnx
- * `hotwordsFile` + `modified_beam_search`. Whisper `initial_prompt` is not used
- * on the bible-only path (no Whisper finals decoder here).
+ * Consumed by NVIDIA Nemotron via sherpa-onnx `hotwordsFile` + `modified_beam_search`.
  */
 export const BIBLE_REFERENCE_FEEDWORDS =
     "Genesis, Exodus, Leviticus, Numbers, Deuteronomy, " +

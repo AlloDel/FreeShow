@@ -1,15 +1,14 @@
 # STT (Electron side)
 
-This folder is the Electron-process half of FreeShow's **bible-only** speech-to-text
+This folder is the Electron-process half of FreeShow's speech-to-text Bible auto-show
 feature: it turns raw microphone PCM into text using a local, offline model. It knows
 nothing about Bibles, verses, or auto-show — that logic lives entirely in the frontend
-(see `src/frontend/stt/README.md`). Song/lyrics matching lives on a separate branch
-(`feature/stt-auto-lyrics`) and is not part of this path.
+(see `src/frontend/stt/README.md`).
 
 ## Engine
 
-Transcription is done by [`sherpa-onnx-node`](https://github.com/k2-fsa/sherpa-onnx), running a
-**streaming transducer** model fully offline/on-device (no network calls once the model
+Transcription is done by [`sherpa-onnx-node`](https://github.com/k2-fsa/sherpa-onnx), running the
+**NVIDIA Nemotron** streaming transducer fully offline/on-device (no network calls once the model
 is downloaded, no cloud API keys).
 
 - `sttEngine.ts` — thin wrapper around `sherpa.OnlineRecognizer`. Consumes 16 kHz mono
@@ -18,7 +17,7 @@ is downloaded, no cloud API keys).
   the text in any way.
 - Utterance segmentation uses **Silero VAD** (speech gate) with a fresh recognizer stream
   per utterance. Defaults are tuned for short spoken Bible references (tighter silence
-  window, higher speech threshold, idle RMS gate) rather than long lyric following.
+  window, higher speech threshold, idle RMS gate).
 - **Bible reference hotwords** (`bibleHotwords.ts`) bias decoding toward book names /
   "chapter" / "verse" via `modified_beam_search`. Score is moderate to avoid inventing
   references from noise. Falls back to `greedy_search` if hotwords fail to load.
@@ -39,10 +38,9 @@ Models are managed by `modelManager.ts` and stored under:
 (e.g. `~/Library/Application Support/FreeShow/stt-models/nemotron-en-int8/` on macOS). They are
 **never committed to the repo** and are fetched at runtime from Hugging Face on first use.
 
-| id                 | description                                                                 | size    |
-| ------------------ | --------------------------------------------------------------------------- | ------- |
-| `nemotron-en-int8` | NVIDIA Nemotron 0.6B streaming transducer (int8) — default, best accuracy   | ~662 MB |
-| `zipformer-en-int8`| Small streaming Zipformer — fast CPU option + short-utterance fallback      | ~73 MB  |
+| id                 | description                                                               | size    |
+| ------------------ | ------------------------------------------------------------------------- | ------- |
+| `nemotron-en-int8` | NVIDIA Nemotron 0.6B streaming transducer (int8) — default and only model | ~662 MB |
 
 Also downloaded on first start:
 
@@ -53,9 +51,10 @@ A model is considered "downloaded" only when all four of its files (`encoder`, `
 `joiner`, `tokens`) exist and are non-empty; `getModelPaths()` returns `null` otherwise, and
 `startStt()` refuses to start until the active model is downloaded.
 
-**What "Nemotron" means here:** the Hugging Face package
+**Exact model:** Hugging Face package
 `csukuangfj/sherpa-onnx-nemotron-speech-streaming-en-0.6b-int8-2026-01-14`
-(NVIDIA NeMotron speech streaming ASR exported for sherpa-onnx). Not Whisper; not a cloud API.
+(id in FreeShow: `nemotron-en-int8`). Local sherpa-onnx ONNX export of NVIDIA Nemotron speech
+streaming ASR — not a cloud API.
 
 ## IPC contract
 

@@ -20,13 +20,17 @@ interface SttModelDef extends Omit<ModelInfo, "downloaded" | "active"> {
     files: { encoder: string; decoder: string; joiner: string; tokens: string }
 }
 
-/** Streaming transducer models, English. int8 quantization keeps CPU load low. */
+/**
+ * Primary ASR model: NVIDIA Nemotron 0.6B streaming transducer (int8).
+ * Model id: nemotron-en-int8
+ * HF: csukuangfj/sherpa-onnx-nemotron-speech-streaming-en-0.6b-int8-2026-01-14
+ */
 const MODELS: SttModelDef[] = [
     {
         id: "nemotron-en-int8",
-        displayName: "English (high accuracy)",
+        displayName: "NVIDIA Nemotron (English)",
         size: 661_920_000,
-        description: "NVIDIA Nemotron 0.6B streaming — best for Bible references (~662 MB)",
+        description: "NVIDIA Nemotron 0.6B streaming transducer — high accuracy for Bible references (~662 MB)",
         baseUrl: "https://huggingface.co/csukuangfj/sherpa-onnx-nemotron-speech-streaming-en-0.6b-int8-2026-01-14/resolve/main",
         files: {
             encoder: "encoder.int8.onnx",
@@ -34,23 +38,10 @@ const MODELS: SttModelDef[] = [
             joiner: "joiner.int8.onnx",
             tokens: "tokens.txt"
         }
-    },
-    {
-        id: "zipformer-en-int8",
-        displayName: "English (fast)",
-        size: 73_440_000,
-        description: "Small streaming model, fastest on CPU; also used as short-utterance fallback (~73 MB)",
-        baseUrl: "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26/resolve/main",
-        files: {
-            encoder: "encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx",
-            decoder: "decoder-epoch-99-avg-1-chunk-16-left-128.onnx",
-            joiner: "joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx",
-            tokens: "tokens.txt"
-        }
     }
 ]
 
-/** Default to Nemotron for bible reference accuracy; Zipformer remains available as the fast/fallback model. */
+/** Default and only catalogued model. */
 let activeModelId: string = "nemotron-en-int8"
 
 function getModelsDir(): string {

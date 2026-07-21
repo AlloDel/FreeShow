@@ -1,8 +1,8 @@
 // ----- FreeShow STT — Bible reference hotwords -----
-// Contextual biasing for sherpa-onnx streaming transducers (Nemotron / Zipformer).
+// Contextual biasing for the NVIDIA Nemotron streaming transducer (sherpa-onnx).
 //
 // IMPORTANT: prompt REFERENCE vocabulary only (book names, chapter, verse, fillers).
-// Do NOT include verse text or song/worship lyrics — that encourages hallucinations.
+// Do NOT include verse text content — that encourages hallucinations.
 //
 // Hotwords require decodingMethod=modified_beam_search (see sherpa-onnx docs).
 // Score is kept moderate so silence/crowd noise does not invent book names.

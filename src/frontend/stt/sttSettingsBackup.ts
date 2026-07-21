@@ -7,16 +7,15 @@ import { sttSettings, type SttSettingsData } from "./sttStore"
 
 const STORAGE_KEY = "freeshow_stt_settings_v1"
 const DEBOUNCE_MS = 500
-/** Fallback for persisted settings referencing a model id that no longer exists. */
+/** Default / only supported streaming model. */
 const DEFAULT_MODEL_ID = "nemotron-en-int8"
-/** Known sherpa streaming model ids. Kept in sync with modelManager.ts's MODELS list. */
-const KNOWN_MODEL_IDS = ["nemotron-en-int8", "zipformer-en-int8"]
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 let installed = false
 
 function normalizeSavedSettings(parsed: Partial<SttSettingsData>): Partial<SttSettingsData> {
-    if (typeof parsed.model === "string" && !KNOWN_MODEL_IDS.includes(parsed.model)) {
+    // Force Nemotron — remap any older/unknown model ids from prior settings backups
+    if (typeof parsed.model !== "string" || parsed.model !== DEFAULT_MODEL_ID) {
         return { ...parsed, model: DEFAULT_MODEL_ID }
     }
 

@@ -85,8 +85,6 @@ async function startStt(payload: SttStartPayload): Promise<void> {
 
         const vadModelPath = await ensureVadModel()
         const hotwordsFile = ensureBibleHotwordsFile()
-        // Small model as a safety net for short utterances the large model ignores
-        const fallbackPaths = modelId !== "zipformer-en-int8" ? getModelPaths("zipformer-en-int8") : null
         engine = new SttEngine()
         engine.on("transcript", (event: TranscriptEvent) => {
             sendToApp("TRANSCRIPT", event)
@@ -94,7 +92,7 @@ async function startStt(payload: SttStartPayload): Promise<void> {
             // module-level reference so status reports (e.g. modelLoaded) reflect reality.
             if ((event.type === "error" || event.type === "disconnected") && engine && !engine.isRunning) engine = null
         })
-        engine.start(paths, vadModelPath, fallbackPaths, hotwordsFile)
+        engine.start(paths, vadModelPath, hotwordsFile)
         setActiveModel(modelId)
         sendStatus()
         console.log(`[STT] Started with model: ${modelId}`)

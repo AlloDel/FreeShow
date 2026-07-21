@@ -1,6 +1,5 @@
 // ----- FreeShow STT — Frontend Manager -----
 // Microphone capture, IPC with the Electron STT engine, and Bible detection wiring.
-// Song/lyrics matching is intentionally out of scope on this bible-only path.
 
 import { get } from "svelte/store"
 import type { BibleDetection, SttStatus, TranscriptEvent, ModelInfo } from "../../types/Stt"
@@ -63,7 +62,6 @@ export async function startStt(): Promise<void> {
                 constructor() {
                     super();
                     // 1024 samples @ 16 kHz ≈ 64 ms — lower IPC latency for short bible refs
-                    // than the previous 2048 (~128 ms) lyric-oriented chunk size.
                     this.chunkSize = 1024;
                     this.pending = new Int16Array(this.chunkSize);
                     this.pendingLength = 0;
@@ -118,7 +116,7 @@ export async function startStt(): Promise<void> {
         workletNode.connect(mutedMonitor)
         mutedMonitor.connect(audioContext.destination)
 
-        // Tell electron to start the streaming STT engine (Nemotron / Zipformer)
+        // Tell electron to start the streaming STT engine (NVIDIA Nemotron)
         sendStt("START", { modelId: settings.model })
     } catch (err) {
         console.error("[STT] Audio setup failed:", err)
