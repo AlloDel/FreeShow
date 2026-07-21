@@ -8,7 +8,31 @@ import type { BibleDetection, BookEntry } from "../../types/Stt"
 import { BIBLE_BOOKS, SPOKEN_NUMBERS } from "./books"
 
 /** Filler phrases stripped before detection (case-insensitive). */
-const FILLER_PHRASES = ["please open your bibles to", "let us turn to", "let's turn to", "go to the book of", "the book of", "book of", "if you turn to", "if you'll turn to", "we will be reading from", "we read in", "the bible says in", "it says in", "as we see in", "as written in", "let's go to", "turn in your bibles to", "turn in your bible to"]
+const FILLER_PHRASES = [
+    "please open your bibles to",
+    "please open your bible to",
+    "let us turn to",
+    "let's turn to",
+    "go to the book of",
+    "the book of",
+    "book of",
+    "if you turn to",
+    "if you'll turn to",
+    "we will be reading from",
+    "we read in",
+    "the bible says in",
+    "it says in",
+    "as we see in",
+    "as written in",
+    "let's go to",
+    "turn in your bibles to",
+    "turn in your bible to",
+    "open with me to",
+    "look with me at",
+    "find with me",
+    "our text is",
+    "our text today is"
+]
 
 /** Phrases indicating the speaker wants to revisit the previous verse. */
 const PREVIOUS_VERSE_PHRASES = ["previous verse", "last verse", "that verse again", "go back to that verse", "back to that verse", "the same verse", "repeat that verse"]

@@ -5,6 +5,7 @@
 import type { IpcMainEvent } from "electron"
 import type { SttMessage, SttStartPayload, TranscriptEvent } from "../../types/Stt"
 import { toApp } from "../index"
+import { ensureBibleHotwordsFile } from "./bibleHotwords"
 import { deleteModel, downloadModel, ensureVadModel, getActiveModelId, getModelPaths, getModels, setActiveModel } from "./modelManager"
 import { SttEngine } from "./sttEngine"
 
@@ -72,7 +73,18 @@ async function startStt(payload: SttStartPayload): Promise<void> {
     }
 
     try {
+        // Tear down any leftover engine before starting (toggle spam / failed prior start)
+        if (engine) {
+            try {
+                engine.stop()
+            } catch {
+                /* */
+            }
+            engine = null
+        }
+
         const vadModelPath = await ensureVadModel()
+        const hotwordsFile = ensureBibleHotwordsFile()
         // Small model as a safety net for short utterances the large model ignores
         const fallbackPaths = modelId !== "zipformer-en-int8" ? getModelPaths("zipformer-en-int8") : null
         engine = new SttEngine()
@@ -82,12 +94,19 @@ async function startStt(payload: SttStartPayload): Promise<void> {
             // module-level reference so status reports (e.g. modelLoaded) reflect reality.
             if ((event.type === "error" || event.type === "disconnected") && engine && !engine.isRunning) engine = null
         })
-        engine.start(paths, vadModelPath, fallbackPaths)
+        engine.start(paths, vadModelPath, fallbackPaths, hotwordsFile)
         setActiveModel(modelId)
         sendStatus()
         console.log(`[STT] Started with model: ${modelId}`)
     } catch (err) {
         console.error("[STT] Failed to start:", err)
+        if (engine) {
+            try {
+                engine.stop()
+            } catch {
+                /* */
+            }
+        }
         engine = null
         sendToApp("TRANSCRIPT", { type: "error", error: err instanceof Error ? err.message : String(err) })
     }
@@ -95,7 +114,11 @@ async function startStt(payload: SttStartPayload): Promise<void> {
 
 function stopStt(): void {
     if (engine) {
-        engine.stop()
+        try {
+            engine.stop()
+        } catch (err) {
+            console.error("[STT] Error during stop:", err)
+        }
         engine = null
     }
     sendStatus()

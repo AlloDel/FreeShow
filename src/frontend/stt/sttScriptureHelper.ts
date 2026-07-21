@@ -14,10 +14,15 @@ import { sttError } from "./sttStore"
  */
 export function getAvailableBibleVersions(): { id: string; name: string }[] {
     const allScriptures = get(scriptures)
-    return Object.entries(allScriptures).map(([id, data]) => ({
-        id,
-        name: (data as any)?.customName || (data as any)?.name || id
-    }))
+    return Object.entries(allScriptures)
+        .map(([id, data]) => {
+            const isCollection = !!(data as any)?.collection
+            const name = (data as any)?.customName || (data as any)?.name || id
+            // collections project every contained version side by side (multi-translation)
+            return { id, name: isCollection ? `${name} (collection)` : name, isCollection }
+        })
+        .sort((a, b) => Number(b.isCollection) - Number(a.isCollection))
+        .map(({ id, name }) => ({ id, name }))
 }
 
 /**

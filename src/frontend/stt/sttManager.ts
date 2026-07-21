@@ -1,11 +1,6 @@
 // ----- FreeShow STT — Frontend Manager -----
-// Manages microphone capture, IPC communication, and STT lifecycle.
-
-// ----- FreeShow STT — Frontend Manager -----
-// Acts as the central nervous system for STT on the frontend.
-// It manages IPC communication with the Electron backend (whisperEngine),
-// handles starting/stopping the transcription pipeline, and funnels
-// all incoming transcript/detection events into Svelte stores (`sttStore.ts`).
+// Microphone capture, IPC with the Electron STT engine, and Bible detection wiring.
+// Song/lyrics matching is intentionally out of scope on this bible-only path.
 
 import { get } from "svelte/store"
 import type { BibleDetection, SttStatus, TranscriptEvent, ModelInfo } from "../../types/Stt"
@@ -67,7 +62,9 @@ export async function startStt(): Promise<void> {
             class CaptureProcessor extends AudioWorkletProcessor {
                 constructor() {
                     super();
-                    this.chunkSize = 2048;
+                    // 1024 samples @ 16 kHz ≈ 64 ms — lower IPC latency for short bible refs
+                    // than the previous 2048 (~128 ms) lyric-oriented chunk size.
+                    this.chunkSize = 1024;
                     this.pending = new Int16Array(this.chunkSize);
                     this.pendingLength = 0;
                 }
@@ -121,7 +118,7 @@ export async function startStt(): Promise<void> {
         workletNode.connect(mutedMonitor)
         mutedMonitor.connect(audioContext.destination)
 
-        // Tell electron to start the whisper engine
+        // Tell electron to start the streaming STT engine (Nemotron / Zipformer)
         sendStt("START", { modelId: settings.model })
     } catch (err) {
         console.error("[STT] Audio setup failed:", err)
@@ -302,7 +299,9 @@ function handleSttMessage(msg: { channel: string; data: any }): void {
 // anything is projected. The engine's final for an utterance is the same text as
 // its last partial, so an identical final just flushes the pending detections.
 
-const PARTIAL_COMMIT_DELAY_MS = 600
+const PARTIAL_COMMIT_DELAY_MS = 450
+/** Suppress re-projecting the same verse for this long (ms). */
+const DETECTION_DEDUP_MS = 4000
 
 let lastDetectorInput = ""
 const pendingDetections = new Map<string, { detection: BibleDetection; timer: ReturnType<typeof setTimeout> }>()
@@ -417,14 +416,14 @@ function handleDetection(detection: BibleDetection): void {
 
     // Add to front of list, limit to 10
     sttDetections.update((list) => {
-        // Avoid duplicates within 5 seconds
-        const isDuplicate = list.some((d) => d.bookNumber === detection.bookNumber && d.chapter === detection.chapter && d.verseStart === detection.verseStart && Date.now() - d.detectedAt < 5000)
+        // Avoid duplicates within a short window (interruptions / partial→final overlap)
+        const isDuplicate = list.some((d) => d.bookNumber === detection.bookNumber && d.chapter === detection.chapter && d.verseStart === detection.verseStart && Date.now() - d.detectedAt < DETECTION_DEDUP_MS)
         if (isDuplicate) return list
 
         return [detection, ...list].slice(0, 10)
     })
 
-    // Intentionally still runs even when the detection is a 5s-duplicate (skipped above only
+    // Intentionally still runs even when the detection is a short-window duplicate (skipped above only
     // from the list), so that re-detecting the same verse re-projects it as "previous verse".
     autoShowIfEnabled(detection)
 }
@@ -436,9 +435,26 @@ function hasExplicitVerseInSnippet(transcript: string): boolean {
     return /\b\d{1,3}\s*v(?:erse)?s?\.?\s*\d{1,3}\b/.test(text)
 }
 
+/** Next/back/previous and lone-number jumps are intentional — allow auto-show. */
+function isVerseJumpOrCommand(transcript: string): boolean {
+    const t = transcript
+        .toLowerCase()
+        .replace(/[.,!?;:]/g, "")
+        .trim()
+    if (!t) return false
+    if (t === "next" || t === "back" || t === "previous" || t === "go back") return true
+    if (/\b(?:next|previous|following|last)\s+verse\b/.test(t)) return true
+    if (/\b(?:that verse again|same verse|repeat that verse|go back to that verse|back to that verse|verse after that)\b/.test(t)) return true
+    // Lone number utterance ("14", "twenty eight") while context is warm
+    if (/^\d{1,3}$/.test(t)) return true
+    if (/^(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:\s+(?:one|two|three|four|five|six|seven|eight|nine))?$/.test(t)) return true
+    if (/^(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen)$/.test(t)) return true
+    return false
+}
+
 function autoShowIfEnabled(detection: BibleDetection): void {
     const settings = get(sttSettings)
-    if (detection.source === "contextual" && !hasExplicitVerseInSnippet(detection.transcriptSnippet)) {
+    if (detection.source === "contextual" && !hasExplicitVerseInSnippet(detection.transcriptSnippet) && !isVerseJumpOrCommand(detection.transcriptSnippet)) {
         return
     }
     if (settings.autoShowBible) {

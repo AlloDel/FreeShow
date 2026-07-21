@@ -23,23 +23,10 @@ interface SttModelDef extends Omit<ModelInfo, "downloaded" | "active"> {
 /** Streaming transducer models, English. int8 quantization keeps CPU load low. */
 const MODELS: SttModelDef[] = [
     {
-        id: "zipformer-en-int8",
-        displayName: "English (fast)",
-        size: 73_440_000,
-        description: "Small streaming model, fastest on CPU (~73 MB)",
-        baseUrl: "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26/resolve/main",
-        files: {
-            encoder: "encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx",
-            decoder: "decoder-epoch-99-avg-1-chunk-16-left-128.onnx",
-            joiner: "joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx",
-            tokens: "tokens.txt"
-        }
-    },
-    {
         id: "nemotron-en-int8",
         displayName: "English (high accuracy)",
         size: 661_920_000,
-        description: "NVIDIA Nemotron 0.6B streaming, best accuracy, adds casing/punctuation (~662 MB)",
+        description: "NVIDIA Nemotron 0.6B streaming — best for Bible references (~662 MB)",
         baseUrl: "https://huggingface.co/csukuangfj/sherpa-onnx-nemotron-speech-streaming-en-0.6b-int8-2026-01-14/resolve/main",
         files: {
             encoder: "encoder.int8.onnx",
@@ -47,10 +34,24 @@ const MODELS: SttModelDef[] = [
             joiner: "joiner.int8.onnx",
             tokens: "tokens.txt"
         }
+    },
+    {
+        id: "zipformer-en-int8",
+        displayName: "English (fast)",
+        size: 73_440_000,
+        description: "Small streaming model, fastest on CPU; also used as short-utterance fallback (~73 MB)",
+        baseUrl: "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26/resolve/main",
+        files: {
+            encoder: "encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx",
+            decoder: "decoder-epoch-99-avg-1-chunk-16-left-128.onnx",
+            joiner: "joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx",
+            tokens: "tokens.txt"
+        }
     }
 ]
 
-let activeModelId: string = MODELS[0].id
+/** Default to Nemotron for bible reference accuracy; Zipformer remains available as the fast/fallback model. */
+let activeModelId: string = "nemotron-en-int8"
 
 function getModelsDir(): string {
     const dir = path.join(app.getPath("userData"), "stt-models")

@@ -7,10 +7,10 @@ import { sttSettings, type SttSettingsData } from "./sttStore"
 
 const STORAGE_KEY = "freeshow_stt_settings_v1"
 const DEBOUNCE_MS = 500
-/** Fallback for persisted settings referencing a model id that no longer exists (e.g. old Whisper ids). */
-const DEFAULT_MODEL_ID = "zipformer-en-int8"
-/** Known sherpa model ids. Kept in sync with modelManager.ts's MODELS list. */
-const KNOWN_MODEL_IDS = [DEFAULT_MODEL_ID]
+/** Fallback for persisted settings referencing a model id that no longer exists. */
+const DEFAULT_MODEL_ID = "nemotron-en-int8"
+/** Known sherpa streaming model ids. Kept in sync with modelManager.ts's MODELS list. */
+const KNOWN_MODEL_IDS = ["nemotron-en-int8", "zipformer-en-int8"]
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 let installed = false

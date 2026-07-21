@@ -82,11 +82,17 @@ export const BIBLE_BOOKS: BookEntry[] = [
 ]
 
 /**
- * Initial prompt containing all 66 Bible book names plus common sermon
- * vocabulary. Biases Whisper's decoder toward biblical vocabulary.
- * Ported from rhema's WhisperConfig.
+ * Reference-vocabulary feedwords for ASR biasing (book names + chapter/verse).
+ *
+ * Used as documentation/source-of-truth for the Electron hotwords file
+ * (`src/electron/stt/bibleHotwords.ts`). Keep this list REFERENCE-ONLY —
+ * do not add verse text or song/worship lyrics (those cause hallucinations).
+ *
+ * Streaming transducers (Nemotron / Zipformer) consume these via sherpa-onnx
+ * `hotwordsFile` + `modified_beam_search`. Whisper `initial_prompt` is not used
+ * on the bible-only path (no Whisper finals decoder here).
  */
-export const BIBLE_INITIAL_PROMPT =
+export const BIBLE_REFERENCE_FEEDWORDS =
     "Genesis, Exodus, Leviticus, Numbers, Deuteronomy, " +
     "Joshua, Judges, Ruth, " +
     "First Samuel, Second Samuel, First Kings, Second Kings, " +
@@ -102,8 +108,8 @@ export const BIBLE_INITIAL_PROMPT =
     "First Thessalonians, Second Thessalonians, " +
     "First Timothy, Second Timothy, Titus, Philemon, " +
     "Hebrews, James, First Peter, Second Peter, " +
-    "First John, Second John, Third John, Jude, Revelation. " +
-    "Bible verse, chapter, scripture, sermon, hymn, worship, hallelujah, amen."
+    "First John, Second John, Third John, Jude, Revelation, " +
+    "chapter, verse, verses, Bible, scripture, next verse, previous verse."
 
 /**
  * Build a lookup map from lowercased name/abbreviation/variant → BookEntry.

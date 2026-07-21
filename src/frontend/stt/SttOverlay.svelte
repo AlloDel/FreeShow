@@ -196,7 +196,7 @@
                             <option value={model.id}>{model.downloaded ? "✓ " : ""}{model.displayName} - {model.description}</option>
                         {/each}
                         {#if $sttModels.length === 0}
-                            <option value="small.en">Small (EN)</option>
+                            <option value="nemotron-en-int8">English (high accuracy)</option>
                         {/if}
                     </select>
                     {#if $sttStatus.isDownloading}
