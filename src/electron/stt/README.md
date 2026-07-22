@@ -18,9 +18,11 @@ is downloaded, no cloud API keys).
 - Utterance segmentation uses **Silero VAD** (speech gate) with a fresh recognizer stream
   per utterance. Defaults are tuned for short spoken Bible references (tighter silence
   window, higher speech threshold, idle RMS gate).
-- **Bible reference hotwords** (`bibleHotwords.ts`) bias decoding toward book names /
-  "chapter" / "verse" via `modified_beam_search`. Score is moderate to avoid inventing
-  references from noise. Falls back to `greedy_search` if hotwords fail to load.
+- **Bible reference hotwords** (`bibleHotwords.ts`) are attempted via `modified_beam_search`
+  and fall back to `greedy_search` when the model rejects that config. Nemotron streaming
+  currently has no effective contextual biasing (sherpa-onnx [#3572](https://github.com/k2-fsa/sherpa-onnx/issues/3572));
+  product accuracy for auto-verse comes from the frontend post-ASR `bibleDetector`.
+  Wiring is kept so biasing can turn on when sherpa supports it.
 - The addon (`sherpa-onnx-node`) is `require()`-d lazily inside `start()` so the app still boots
   on platforms/architectures where the native addon fails to load; a failure surfaces as an
   `error` transcript event instead of crashing Electron.
@@ -45,7 +47,8 @@ Models are managed by `modelManager.ts` and stored under:
 Also downloaded on first start:
 
 - `silero_vad.onnx` — speech activity detection (~630 KB)
-- `bible-hotwords.txt` — reference-vocabulary bias list (regenerated each start)
+- `bible-hotwords.txt` — reference-vocabulary list (regenerated each start; biasing not
+  effective on Nemotron streaming until sherpa-onnx #3572)
 
 A model is considered "downloaded" only when all four of its files (`encoder`, `decoder`,
 `joiner`, `tokens`) exist and are non-empty; `getModelPaths()` returns `null` otherwise, and
@@ -86,7 +89,7 @@ the same `{ channel, data }` envelope pattern as `receiveAudio.ts`. `receiveStt.
 ## Files
 
 - `sttEngine.ts` — sherpa-onnx streaming recognizer wrapper (audio in → transcript events out).
-- `bibleHotwords.ts` — reference-only hotwords file for contextual biasing.
+- `bibleHotwords.ts` — reference-only hotwords file (attempted; falls back to greedy).
 - `modelManager.ts` — model catalog, download/delete, path resolution, active-model tracking.
 - `receiveStt.ts` — IPC router; owns the single live `SttEngine` instance and translates IPC
   messages into engine calls / status broadcasts.

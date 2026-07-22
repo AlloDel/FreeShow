@@ -5,7 +5,7 @@
 
 import { uid } from "uid"
 import type { BibleDetection, BookEntry } from "../../types/Stt"
-import { BIBLE_BOOKS, SPOKEN_NUMBERS } from "./books"
+import { ASR_BOOK_CONFUSIONS, BIBLE_BOOKS, SPOKEN_NUMBERS } from "./books"
 
 /** Filler phrases stripped before detection (case-insensitive). */
 const FILLER_PHRASES = [
@@ -31,7 +31,13 @@ const FILLER_PHRASES = [
     "look with me at",
     "find with me",
     "our text is",
-    "our text today is"
+    "our text today is",
+    "would you turn with me to",
+    "turn with me to",
+    "take your bibles to",
+    "take your bible to",
+    "i invite you to turn to",
+    "come with me to"
 ]
 
 /** Phrases indicating the speaker wants to revisit the previous verse. */
@@ -61,8 +67,13 @@ interface BookMatch {
     book: BookEntry
     start: number
     end: number
-    /** Matched via edit-distance fallback (misheard STT output) — requires a full chapter+verse to count. */
+    /** Matched via edit-distance or ASR-confusion alias — scored lower than exact. */
     fuzzy?: boolean
+    /**
+     * When true (default for fuzzy/ASR common-word aliases), chapter-only refs are rejected.
+     * Curated high-signal aliases (Palm→Psalms) set this false so "Palm 23" still works.
+     */
+    requireVerse?: boolean
 }
 
 /** Confidence penalty applied to fuzzy (edit-distance) book matches. */
@@ -121,9 +132,10 @@ export class BibleDetector {
 
             if (ref.chapter > 0 && ref.chapter > match.book.maxChapters) continue
 
-            // A misheard-name match needs a full chapter+verse to count — a bare number
-            // after an unrecognized word is far too weak evidence.
-            if (match.fuzzy && ref.verseStart === 0) continue
+            // Misheard / common-word aliases need a full chapter+verse unless the alias
+            // is an explicit high-signal confusion (Palm→Psalms).
+            const requireVerse = match.requireVerse ?? !!match.fuzzy
+            if (requireVerse && ref.verseStart === 0) continue
 
             // Chapter-only ("Genesis 3"): show verse 1 and keep the context warm
             if (ref.verseStart === 0) {
@@ -137,7 +149,8 @@ export class BibleDetector {
                     continue
                 }
 
-                const detection = this.makeDetection(match.book.number, match.book.name, ref.chapter, 1, undefined, 0.86, cleaned, "contextual")
+                const chapterOnlyConfidence = 0.86 - (match.fuzzy ? FUZZY_CONFIDENCE_PENALTY : 0)
+                const detection = this.makeDetection(match.book.number, match.book.name, ref.chapter, 1, undefined, chapterOnlyConfidence, cleaned, "contextual")
                 this.setContext(detection, true)
                 this.pushRecent(detection)
                 detections.push(detection)
@@ -251,6 +264,7 @@ export class BibleDetector {
             }
         }
 
+        this.findAsrConfusions(lower, matches)
         this.findFuzzyBooks(lower, matches)
 
         // Suppress matches fully contained within a longer match ("john" inside
@@ -259,6 +273,46 @@ export class BibleDetector {
         const filtered = matches.filter((match) => !matches.some((other) => other !== match && other.start <= match.start && match.end <= other.end && other.end - other.start > match.end - match.start))
 
         return filtered.sort((a, b) => a.start - b.start)
+    }
+
+    /**
+     * Curated phonetic / ASR near-miss aliases for short book names.
+     * Marked fuzzy (lower confidence). Common-word aliases require a full
+     * chapter+verse; high-signal ones like Palm→Psalms may allow chapter-only.
+     */
+    private findAsrConfusions(lower: string, matches: BookMatch[]): void {
+        for (const entry of ASR_BOOK_CONFUSIONS) {
+            const alias = entry.alias.toLowerCase()
+            let searchFrom = 0
+
+            while (true) {
+                const idx = lower.indexOf(alias, searchFrom)
+                if (idx === -1) break
+
+                const before = idx > 0 ? lower[idx - 1] : " "
+                const after = idx + alias.length < lower.length ? lower[idx + alias.length] : " "
+                const validBefore = !(/\w/.test(before) && before !== " ")
+                const validAfter = !(/\w/.test(after) && after !== " " && !/[:.,;!?]/.test(after) && !/\d/.test(after))
+
+                if (validBefore && validAfter) {
+                    const end = idx + alias.length
+                    if (!matches.some((m) => m.start < end && idx < m.end)) {
+                        const book = BIBLE_BOOKS.find((b) => b.number === entry.bookNumber)
+                        if (book) {
+                            matches.push({
+                                book,
+                                start: idx,
+                                end,
+                                fuzzy: true,
+                                requireVerse: entry.requireVerse !== false
+                            })
+                        }
+                    }
+                }
+
+                searchFrom = idx + alias.length
+            }
+        }
     }
 
     /**
@@ -295,7 +349,7 @@ export class BibleDetector {
                         if (name === candidate.text) continue // exact matches are handled above
 
                         if (levenshtein(candidate.text, name, maxDist) <= maxDist) {
-                            matches.push({ book, start: candidate.start, end: candidate.end, fuzzy: true })
+                            matches.push({ book, start: candidate.start, end: candidate.end, fuzzy: true, requireVerse: true })
                             matched = true
                             break
                         }
@@ -320,6 +374,18 @@ export class BibleDetector {
                 chapter: parseInt(separatedMatch[1]),
                 verseStart: parseInt(separatedMatch[2]),
                 verseEnd: separatedMatch[3] ? parseInt(separatedMatch[3]) : undefined
+            }
+        }
+
+        // Pattern 1b: spoken "colon" — "3 colon 16", "eight colon twenty eight"
+        const colonPattern = /^(\d{1,3}|[a-z]+(?:\s+[a-z]+)?)\s+colon\s+(\d{1,3}|[a-z]+(?:\s+[a-z]+)?)(?:\s*(?:through|to|-|–|—)\s*(\d{1,3}|[a-z]+(?:\s+[a-z]+)?))?(?:\s|$|[,.!?;:])/i
+        const colonMatch = afterBook.match(colonPattern)
+        if (colonMatch) {
+            const chapter = this.parseNumber(colonMatch[1])
+            const verseStart = this.parseNumber(colonMatch[2])
+            const verseEnd = colonMatch[3] ? this.parseNumber(colonMatch[3]) : undefined
+            if (chapter > 0 && verseStart > 0) {
+                return { chapter, verseStart, verseEnd: verseEnd && verseEnd > verseStart ? verseEnd : undefined }
             }
         }
 

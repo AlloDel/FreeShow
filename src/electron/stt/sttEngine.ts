@@ -81,6 +81,7 @@ export class SttEngine extends EventEmitter {
 
             if (withHotwords && hotwordsFile) {
                 // Hotwords require modified_beam_search (greedy ignores hotwordsFile).
+                // Nemotron streaming currently rejects this and falls back below (sherpa #3572).
                 // Modest beam width keeps realtime CPU cost close to greedy for short refs.
                 config.decodingMethod = "modified_beam_search"
                 config.maxActivePaths = BIBLE_HOTWORDS_MAX_ACTIVE_PATHS
@@ -93,11 +94,12 @@ export class SttEngine extends EventEmitter {
             return new sherpa.OnlineRecognizer(config)
         }
 
-        // Prefer hotword-biased decoding; fall back to greedy if the model rejects the config
+        // Attempt hotword-biased decoding; fall back to greedy if the model rejects the config
+        // (Nemotron streaming has no effective biasing until sherpa-onnx #3572).
         try {
             this.recognizer = makeRecognizer(!!hotwordsFile)
             this.usingHotwords = !!hotwordsFile
-            if (this.usingHotwords) console.log("[STT] Bible reference hotwords enabled")
+            if (this.usingHotwords) console.log("[STT] Bible hotwords requested (effective only if modified_beam_search is supported)")
         } catch (err) {
             console.warn("[STT] Hotwords recognizer failed, falling back to greedy_search:", err)
             this.recognizer = makeRecognizer(false)

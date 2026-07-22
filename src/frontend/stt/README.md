@@ -18,7 +18,7 @@ is made in `bibleDetector.ts` (covered by unit tests in `bibleDetector.test.ts`)
      │  16 kHz mono PCM, Int16, 1024-sample chunks (~64 ms)
      ▼
  IPC "STT" / AUDIO_DATA  ──────────────►  Electron: SttEngine (sherpa-onnx Nemotron)
-                                                │  Silero VAD + bible reference hotwords
+                                                │  Silero VAD (+ hotwords attempted; greedy fallback)
      ◄────────────────────────────────────────┘
  IPC "STT" / TRANSCRIPT
      │  { type: "partial" | "final", transcript }
@@ -66,6 +66,8 @@ abbreviations are intentionally excluded from spoken matching.
 
 Reference feedwords (book names + chapter/verse) live in `BIBLE_REFERENCE_FEEDWORDS` and are
 mirrored into the Electron hotwords file — **not** verse text content (that causes hallucinations).
+Hotwords are attempted but Nemotron streaming falls back to greedy until sherpa-onnx #3572;
+detection accuracy comes from this post-ASR detector (including ASR confusion aliases).
 
 ## Auto-show gating
 
@@ -92,7 +94,7 @@ version/tab (including scripture collections) and scripture reference, then call
 - `sttManager.ts` — audio capture (AudioWorklet → 16 kHz PCM), IPC plumbing, transcript →
   detection → auto-show orchestration.
 - `bibleDetector.ts` / `bibleDetector.test.ts` — the unified reference detector and its tests.
-- `books.ts` — Bible book metadata + reference feedwords documentation.
+- `books.ts` — Bible book metadata, ASR confusion aliases, reference feedwords docs.
 - `sttScriptureHelper.ts` — bridges a `BibleDetection` to FreeShow's scripture store/output.
 - `sttSettingsBackup.ts` — persists STT settings across restarts.
 - `SttOverlay.svelte` / `SttSettings.svelte` / `SttToggle.svelte` — the UI.

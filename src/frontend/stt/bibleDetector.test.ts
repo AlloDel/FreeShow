@@ -247,6 +247,108 @@ describe("BibleDetector", () => {
         })
     })
 
+    describe("ASR confusion aliases (phonetic near-misses)", () => {
+        it("resolves Palm 23 as Psalms (common ASR garble)", () => {
+            const [d] = detector.processTranscript("Palm 23")
+            expect(d).toMatchObject({ bookName: "Psalms", chapter: 23, verseStart: 1, source: "contextual" })
+            expect(d.confidence).toBeLessThan(0.95)
+        })
+
+        it("resolves Joan 3:16 as John", () => {
+            const [d] = detector.processTranscript("Joan 3:16")
+            expect(d).toMatchObject({ bookName: "John", chapter: 3, verseStart: 16, source: "direct" })
+        })
+
+        it("resolves Look 15:11 as Luke", () => {
+            const [d] = detector.processTranscript("Look 15:11")
+            expect(d).toMatchObject({ bookName: "Luke", chapter: 15, verseStart: 11 })
+        })
+
+        it("resolves Axe 2:42 as Acts", () => {
+            const [d] = detector.processTranscript("Axe 2:42")
+            expect(d).toMatchObject({ bookName: "Acts", chapter: 2, verseStart: 42 })
+        })
+
+        it("resolves Games 1:2 as James", () => {
+            const [d] = detector.processTranscript("Games 1:2")
+            expect(d).toMatchObject({ bookName: "James", chapter: 1, verseStart: 2 })
+        })
+
+        it("resolves Roof 1:16 as Ruth", () => {
+            const [d] = detector.processTranscript("Roof 1:16")
+            expect(d).toMatchObject({ bookName: "Ruth", chapter: 1, verseStart: 16 })
+        })
+
+        it("resolves Dude 1:3 as Jude", () => {
+            const [d] = detector.processTranscript("Dude 1:3")
+            expect(d).toMatchObject({ bookName: "Jude", chapter: 1, verseStart: 3 })
+        })
+
+        it("resolves Filemon 1:6 as Philemon", () => {
+            const [d] = detector.processTranscript("Filemon 1:6")
+            expect(d).toMatchObject({ bookName: "Philemon", chapter: 1, verseStart: 6 })
+        })
+
+        it("resolves Jenesis 1:1 as Genesis", () => {
+            const [d] = detector.processTranscript("Jenesis 1:1")
+            expect(d).toMatchObject({ bookName: "Genesis", chapter: 1, verseStart: 1 })
+        })
+
+        it("resolves First Cornithians 13 as 1 Corinthians", () => {
+            const [d] = detector.processTranscript("First Cornithians 13")
+            expect(d).toMatchObject({ bookName: "1 Corinthians", chapter: 13, verseStart: 1, source: "contextual" })
+        })
+
+        it("resolves 1st John 4:8", () => {
+            const [d] = detector.processTranscript("1st John 4:8")
+            expect(d).toMatchObject({ bookName: "1 John", chapter: 4, verseStart: 8 })
+        })
+
+        it("resolves Thessaloniaans misspelling with verse", () => {
+            const [d] = detector.processTranscript("First Thessalonians 5:16")
+            expect(d).toMatchObject({ bookName: "1 Thessalonians", chapter: 5, verseStart: 16 })
+            detector.reset()
+            const [garbled] = detector.processTranscript("First Thesalonians 5:16")
+            expect(garbled).toMatchObject({ bookName: "1 Thessalonians", chapter: 5, verseStart: 16 })
+        })
+
+        it("does not invent Luke from bare 'look' without a reference", () => {
+            expect(detector.processTranscript("look at the screen please")).toEqual([])
+        })
+
+        it("does not invent Acts from bare 'ask' with only a chapter", () => {
+            // Short common-word aliases require a full chapter+verse
+            expect(detector.processTranscript("ask 2")).toEqual([])
+        })
+
+        it("scores ASR confusion matches lower than exact book names", () => {
+            const [fuzzy] = detector.processTranscript("Joan 3:16")
+            detector.reset()
+            const [exact] = detector.processTranscript("John 3:16")
+            expect(fuzzy.confidence).toBeLessThan(exact.confidence)
+        })
+    })
+
+    describe("spoken colon and ordinal patterns", () => {
+        it("parses 'John 3 colon 16'", () => {
+            const [d] = detector.processTranscript("John 3 colon 16")
+            expect(d).toMatchObject({ bookName: "John", chapter: 3, verseStart: 16 })
+        })
+
+        it("parses spoken chapter and verse around colon", () => {
+            const [d] = detector.processTranscript("Romans eight colon twenty eight")
+            expect(d).toMatchObject({ bookName: "Romans", chapter: 8, verseStart: 28 })
+        })
+    })
+
+    describe("verse continuation after ASR garbled book", () => {
+        it("continues verses after Palm 23 chapter-only", () => {
+            detector.processTranscript("Palm 23")
+            const [d] = detector.processTranscript("verse 4")
+            expect(d).toMatchObject({ bookName: "Psalms", chapter: 23, verseStart: 4, source: "contextual" })
+        })
+    })
+
     describe("chapter keyword without verse keyword", () => {
         it("parses 'chapter N M' as chapter and verse", () => {
             const [d] = detector.processTranscript("Genesis chapter 5 22")

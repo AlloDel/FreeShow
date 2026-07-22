@@ -5,6 +5,8 @@
 // Do NOT include verse text content — that encourages hallucinations.
 //
 // Hotwords require decodingMethod=modified_beam_search (see sherpa-onnx docs).
+// Nemotron streaming currently rejects modified_beam_search and falls back to greedy
+// (sherpa-onnx #3572) — keep this file wired so biasing works when sherpa supports it.
 // Score is kept moderate so silence/crowd noise does not invent book names.
 
 import fs from "fs"

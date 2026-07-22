@@ -12,20 +12,20 @@ import type { BookEntry } from "../../types/Stt"
  */
 export const BIBLE_BOOKS: BookEntry[] = [
     // --- Old Testament ---
-    { number: 1, name: "Genesis", abbreviations: ["gen", "gn"], spokenVariants: ["genesis"], maxChapters: 50 },
+    { number: 1, name: "Genesis", abbreviations: ["gen", "gn"], spokenVariants: ["genesis", "jenesis", "genesys"], maxChapters: 50 },
     { number: 2, name: "Exodus", abbreviations: ["exod", "exo", "ex"], spokenVariants: ["exodus"], maxChapters: 40 },
     { number: 3, name: "Leviticus", abbreviations: ["lev", "lv"], spokenVariants: ["leviticus"], maxChapters: 27 },
     { number: 4, name: "Numbers", abbreviations: ["num", "nm", "nb"], spokenVariants: ["numbers"], maxChapters: 36 },
-    { number: 5, name: "Deuteronomy", abbreviations: ["deut", "deu", "dt"], spokenVariants: ["deuteronomy"], maxChapters: 34 },
+    { number: 5, name: "Deuteronomy", abbreviations: ["deut", "deu", "dt"], spokenVariants: ["deuteronomy", "deutronomy"], maxChapters: 34 },
     { number: 6, name: "Joshua", abbreviations: ["josh", "jos"], spokenVariants: ["joshua"], maxChapters: 24 },
     { number: 7, name: "Judges", abbreviations: ["judg", "jdg", "jg"], spokenVariants: ["judges"], maxChapters: 21 },
     { number: 8, name: "Ruth", abbreviations: ["ruth", "rth", "ru"], spokenVariants: ["ruth"], maxChapters: 4 },
-    { number: 9, name: "1 Samuel", abbreviations: ["1sam", "1sa", "1sm"], spokenVariants: ["first samuel", "1 samuel", "i samuel"], maxChapters: 31 },
-    { number: 10, name: "2 Samuel", abbreviations: ["2sam", "2sa", "2sm"], spokenVariants: ["second samuel", "2 samuel", "ii samuel"], maxChapters: 24 },
-    { number: 11, name: "1 Kings", abbreviations: ["1kgs", "1ki", "1kg"], spokenVariants: ["first kings", "1 kings", "i kings"], maxChapters: 22 },
-    { number: 12, name: "2 Kings", abbreviations: ["2kgs", "2ki", "2kg"], spokenVariants: ["second kings", "2 kings", "ii kings"], maxChapters: 25 },
-    { number: 13, name: "1 Chronicles", abbreviations: ["1chr", "1ch"], spokenVariants: ["first chronicles", "1 chronicles", "i chronicles"], maxChapters: 29 },
-    { number: 14, name: "2 Chronicles", abbreviations: ["2chr", "2ch"], spokenVariants: ["second chronicles", "2 chronicles", "ii chronicles"], maxChapters: 36 },
+    { number: 9, name: "1 Samuel", abbreviations: ["1sam", "1sa", "1sm"], spokenVariants: ["first samuel", "1 samuel", "i samuel", "1st samuel"], maxChapters: 31 },
+    { number: 10, name: "2 Samuel", abbreviations: ["2sam", "2sa", "2sm"], spokenVariants: ["second samuel", "2 samuel", "ii samuel", "2nd samuel"], maxChapters: 24 },
+    { number: 11, name: "1 Kings", abbreviations: ["1kgs", "1ki", "1kg"], spokenVariants: ["first kings", "1 kings", "i kings", "1st kings"], maxChapters: 22 },
+    { number: 12, name: "2 Kings", abbreviations: ["2kgs", "2ki", "2kg"], spokenVariants: ["second kings", "2 kings", "ii kings", "2nd kings"], maxChapters: 25 },
+    { number: 13, name: "1 Chronicles", abbreviations: ["1chr", "1ch"], spokenVariants: ["first chronicles", "1 chronicles", "i chronicles", "1st chronicles"], maxChapters: 29 },
+    { number: 14, name: "2 Chronicles", abbreviations: ["2chr", "2ch"], spokenVariants: ["second chronicles", "2 chronicles", "ii chronicles", "2nd chronicles"], maxChapters: 36 },
     { number: 15, name: "Ezra", abbreviations: ["ezr"], spokenVariants: ["ezra"], maxChapters: 10 },
     { number: 16, name: "Nehemiah", abbreviations: ["neh", "ne"], spokenVariants: ["nehemiah"], maxChapters: 13 },
     { number: 17, name: "Esther", abbreviations: ["est", "esth"], spokenVariants: ["esther"], maxChapters: 10 },
@@ -46,39 +46,96 @@ export const BIBLE_BOOKS: BookEntry[] = [
     { number: 32, name: "Jonah", abbreviations: ["jonah", "jon", "jnh"], spokenVariants: ["jonah"], maxChapters: 4 },
     { number: 33, name: "Micah", abbreviations: ["mic", "mc"], spokenVariants: ["micah"], maxChapters: 7 },
     { number: 34, name: "Nahum", abbreviations: ["nah", "na"], spokenVariants: ["nahum"], maxChapters: 3 },
-    { number: 35, name: "Habakkuk", abbreviations: ["hab"], spokenVariants: ["habakkuk"], maxChapters: 3 },
+    { number: 35, name: "Habakkuk", abbreviations: ["hab"], spokenVariants: ["habakkuk", "habakuk"], maxChapters: 3 },
     { number: 36, name: "Zephaniah", abbreviations: ["zeph", "zep"], spokenVariants: ["zephaniah"], maxChapters: 3 },
     { number: 37, name: "Haggai", abbreviations: ["hag", "hg"], spokenVariants: ["haggai"], maxChapters: 2 },
     { number: 38, name: "Zechariah", abbreviations: ["zech", "zec"], spokenVariants: ["zechariah"], maxChapters: 14 },
     { number: 39, name: "Malachi", abbreviations: ["mal", "ml"], spokenVariants: ["malachi"], maxChapters: 4 },
     // --- New Testament ---
-    { number: 40, name: "Matthew", abbreviations: ["matt", "mat", "mt"], spokenVariants: ["matthew"], maxChapters: 28 },
-    { number: 41, name: "Mark", abbreviations: ["mrk", "mk", "mr"], spokenVariants: ["mark"], maxChapters: 16 },
+    { number: 40, name: "Matthew", abbreviations: ["matt", "mat", "mt"], spokenVariants: ["matthew", "mathew"], maxChapters: 28 },
+    { number: 41, name: "Mark", abbreviations: ["mrk", "mk", "mr"], spokenVariants: ["mark", "marc"], maxChapters: 16 },
     { number: 42, name: "Luke", abbreviations: ["luk", "lk"], spokenVariants: ["luke"], maxChapters: 24 },
     { number: 43, name: "John", abbreviations: ["joh", "jhn", "jn"], spokenVariants: ["john"], maxChapters: 21 },
     { number: 44, name: "Acts", abbreviations: ["act", "ac"], spokenVariants: ["acts", "acts of the apostles"], maxChapters: 28 },
     { number: 45, name: "Romans", abbreviations: ["rom", "ro", "rm"], spokenVariants: ["romans"], maxChapters: 16 },
-    { number: 46, name: "1 Corinthians", abbreviations: ["1cor", "1co"], spokenVariants: ["first corinthians", "1 corinthians", "i corinthians"], maxChapters: 16 },
-    { number: 47, name: "2 Corinthians", abbreviations: ["2cor", "2co"], spokenVariants: ["second corinthians", "2 corinthians", "ii corinthians"], maxChapters: 13 },
-    { number: 48, name: "Galatians", abbreviations: ["gal", "ga"], spokenVariants: ["galatians"], maxChapters: 6 },
+    {
+        number: 46,
+        name: "1 Corinthians",
+        abbreviations: ["1cor", "1co"],
+        spokenVariants: ["first corinthians", "1 corinthians", "i corinthians", "1st corinthians", "first cornithians", "1st cornithians", "first korinthians"],
+        maxChapters: 16
+    },
+    {
+        number: 47,
+        name: "2 Corinthians",
+        abbreviations: ["2cor", "2co"],
+        spokenVariants: ["second corinthians", "2 corinthians", "ii corinthians", "2nd corinthians", "second cornithians", "2nd cornithians", "second korinthians"],
+        maxChapters: 13
+    },
+    { number: 48, name: "Galatians", abbreviations: ["gal", "ga"], spokenVariants: ["galatians", "galations"], maxChapters: 6 },
     { number: 49, name: "Ephesians", abbreviations: ["eph", "ep"], spokenVariants: ["ephesians"], maxChapters: 6 },
-    { number: 50, name: "Philippians", abbreviations: ["phil", "php", "pp"], spokenVariants: ["philippians"], maxChapters: 4 },
-    { number: 51, name: "Colossians", abbreviations: ["col", "co"], spokenVariants: ["colossians"], maxChapters: 4 },
-    { number: 52, name: "1 Thessalonians", abbreviations: ["1thess", "1th", "1thes"], spokenVariants: ["first thessalonians", "1 thessalonians", "i thessalonians"], maxChapters: 5 },
-    { number: 53, name: "2 Thessalonians", abbreviations: ["2thess", "2th", "2thes"], spokenVariants: ["second thessalonians", "2 thessalonians", "ii thessalonians"], maxChapters: 3 },
-    { number: 54, name: "1 Timothy", abbreviations: ["1tim", "1ti"], spokenVariants: ["first timothy", "1 timothy", "i timothy"], maxChapters: 6 },
-    { number: 55, name: "2 Timothy", abbreviations: ["2tim", "2ti"], spokenVariants: ["second timothy", "2 timothy", "ii timothy"], maxChapters: 4 },
+    { number: 50, name: "Philippians", abbreviations: ["phil", "php", "pp"], spokenVariants: ["philippians", "philipians"], maxChapters: 4 },
+    { number: 51, name: "Colossians", abbreviations: ["col", "co"], spokenVariants: ["colossians", "colosians"], maxChapters: 4 },
+    {
+        number: 52,
+        name: "1 Thessalonians",
+        abbreviations: ["1thess", "1th", "1thes"],
+        spokenVariants: ["first thessalonians", "1 thessalonians", "i thessalonians", "1st thessalonians", "first thesalonians", "1st thesalonians"],
+        maxChapters: 5
+    },
+    {
+        number: 53,
+        name: "2 Thessalonians",
+        abbreviations: ["2thess", "2th", "2thes"],
+        spokenVariants: ["second thessalonians", "2 thessalonians", "ii thessalonians", "2nd thessalonians", "second thesalonians", "2nd thesalonians"],
+        maxChapters: 3
+    },
+    { number: 54, name: "1 Timothy", abbreviations: ["1tim", "1ti"], spokenVariants: ["first timothy", "1 timothy", "i timothy", "1st timothy"], maxChapters: 6 },
+    { number: 55, name: "2 Timothy", abbreviations: ["2tim", "2ti"], spokenVariants: ["second timothy", "2 timothy", "ii timothy", "2nd timothy"], maxChapters: 4 },
     { number: 56, name: "Titus", abbreviations: ["tit", "ti"], spokenVariants: ["titus"], maxChapters: 3 },
-    { number: 57, name: "Philemon", abbreviations: ["phlm", "phm", "philem"], spokenVariants: ["philemon"], maxChapters: 1 },
+    { number: 57, name: "Philemon", abbreviations: ["phlm", "phm", "philem"], spokenVariants: ["philemon", "filemon"], maxChapters: 1 },
     { number: 58, name: "Hebrews", abbreviations: ["heb", "he"], spokenVariants: ["hebrews"], maxChapters: 13 },
     { number: 59, name: "James", abbreviations: ["jas", "jm"], spokenVariants: ["james"], maxChapters: 5 },
-    { number: 60, name: "1 Peter", abbreviations: ["1pet", "1pe", "1pt"], spokenVariants: ["first peter", "1 peter", "i peter"], maxChapters: 5 },
-    { number: 61, name: "2 Peter", abbreviations: ["2pet", "2pe", "2pt"], spokenVariants: ["second peter", "2 peter", "ii peter"], maxChapters: 3 },
-    { number: 62, name: "1 John", abbreviations: ["1joh", "1jn", "1jo"], spokenVariants: ["first john", "1 john", "i john"], maxChapters: 5 },
-    { number: 63, name: "2 John", abbreviations: ["2joh", "2jn", "2jo"], spokenVariants: ["second john", "2 john", "ii john"], maxChapters: 1 },
-    { number: 64, name: "3 John", abbreviations: ["3joh", "3jn", "3jo"], spokenVariants: ["third john", "3 john", "iii john"], maxChapters: 1 },
+    { number: 60, name: "1 Peter", abbreviations: ["1pet", "1pe", "1pt"], spokenVariants: ["first peter", "1 peter", "i peter", "1st peter"], maxChapters: 5 },
+    { number: 61, name: "2 Peter", abbreviations: ["2pet", "2pe", "2pt"], spokenVariants: ["second peter", "2 peter", "ii peter", "2nd peter"], maxChapters: 3 },
+    { number: 62, name: "1 John", abbreviations: ["1joh", "1jn", "1jo"], spokenVariants: ["first john", "1 john", "i john", "1st john"], maxChapters: 5 },
+    { number: 63, name: "2 John", abbreviations: ["2joh", "2jn", "2jo"], spokenVariants: ["second john", "2 john", "ii john", "2nd john"], maxChapters: 1 },
+    { number: 64, name: "3 John", abbreviations: ["3joh", "3jn", "3jo"], spokenVariants: ["third john", "3 john", "iii john", "3rd john"], maxChapters: 1 },
     { number: 65, name: "Jude", abbreviations: ["jude", "jud", "jd"], spokenVariants: ["jude"], maxChapters: 1 },
     { number: 66, name: "Revelation", abbreviations: ["rev", "re", "rv"], spokenVariants: ["revelation", "revelations"], maxChapters: 22 }
+]
+
+/**
+ * Phonetic / ASR near-miss aliases for short book names that edit-distance
+ * matching intentionally skips (length < 5) to avoid everyday false positives.
+ *
+ * Always treated as fuzzy by the detector. When `requireVerse` is true (default),
+ * a full chapter+verse is required — chapter-only from common words like "look"
+ * / "ask" is too weak. Stronger aliases (e.g. Palm→Psalm) may allow chapter-only.
+ */
+export interface AsrBookConfusion {
+    alias: string
+    bookNumber: number
+    /** Default true. Set false only for high-signal aliases (Palm→Psalms). */
+    requireVerse?: boolean
+}
+
+export const ASR_BOOK_CONFUSIONS: AsrBookConfusion[] = [
+    // Psalms — "Palm 23" is the classic ASR garble; allow chapter-only
+    { alias: "palm", bookNumber: 19, requireVerse: false },
+    { alias: "palms", bookNumber: 19, requireVerse: false },
+    // John
+    { alias: "joan", bookNumber: 43 },
+    { alias: "jon", bookNumber: 43 },
+    // Acts — short common words need full chapter+verse
+    { alias: "axe", bookNumber: 44 },
+    { alias: "ask", bookNumber: 44 },
+    // Mark / Luke / James / Ruth / Jude
+    { alias: "look", bookNumber: 42 },
+    { alias: "games", bookNumber: 59 },
+    { alias: "roof", bookNumber: 8 },
+    { alias: "dude", bookNumber: 65 },
+    { alias: "juice", bookNumber: 65 }
 ]
 
 /**
@@ -88,7 +145,9 @@ export const BIBLE_BOOKS: BookEntry[] = [
  * (`src/electron/stt/bibleHotwords.ts`). Keep this list REFERENCE-ONLY —
  * do not add verse text content (that causes hallucinations).
  *
- * Consumed by NVIDIA Nemotron via sherpa-onnx `hotwordsFile` + `modified_beam_search`.
+ * Attempted with sherpa-onnx `hotwordsFile` + `modified_beam_search`; Nemotron
+ * streaming currently falls back to greedy (biasing not effective until
+ * sherpa-onnx #3572). Product accuracy relies on the post-ASR bible detector.
  */
 export const BIBLE_REFERENCE_FEEDWORDS =
     "Genesis, Exodus, Leviticus, Numbers, Deuteronomy, " +
