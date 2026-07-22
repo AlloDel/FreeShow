@@ -40,7 +40,8 @@ export interface BibleDetection {
     verseStart: number
     verseEnd?: number
     confidence: number
-    source: "direct" | "contextual"
+    /** How the verse was found: spoken reference, warm context, or quoted verse text. */
+    source: "direct" | "contextual" | "quotation"
     transcriptSnippet: string
     detectedAt: number
 }

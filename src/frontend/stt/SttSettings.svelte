@@ -40,6 +40,10 @@
         sttSettings.update((s) => ({ ...s, autoShowBible: !s.autoShowBible }))
     }
 
+    function toggleMatchQuotedVerseText() {
+        sttSettings.update((s) => ({ ...s, matchQuotedVerseText: !s.matchQuotedVerseText }))
+    }
+
     function handleDownload(modelId: string) {
         downloadModel(modelId)
     }
@@ -110,6 +114,11 @@
     <div class="stt-setting-row">
         <label class="stt-setting-label" for="auto-show-bible">Auto-project Verses</label>
         <input type="checkbox" id="auto-show-bible" class="stt-checkbox" checked={$sttSettings.autoShowBible} on:change={toggleBibleAutoShow} />
+    </div>
+
+    <div class="stt-setting-row">
+        <label class="stt-setting-label" for="match-quoted-verse" title="Match spoken verse wording against your Bible translation on streaming transcripts (default on)">Match quoted verse text</label>
+        <input type="checkbox" id="match-quoted-verse" class="stt-checkbox" checked={$sttSettings.matchQuotedVerseText} on:change={toggleMatchQuotedVerseText} />
     </div>
 
     <!-- Microphone -->

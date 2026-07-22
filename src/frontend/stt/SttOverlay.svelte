@@ -39,6 +39,12 @@
         return Math.round(confidence * 100) + "%"
     }
 
+    function formatSource(source: string): string {
+        if (source === "quotation") return "quote"
+        if (source === "contextual") return "context"
+        return "ref"
+    }
+
     function handleShowVerse(detection: any) {
         showDetection(detection)
     }
@@ -162,7 +168,10 @@
                                 <div class="stt-list-item">
                                     <div class="stt-item-header">
                                         <strong class="stt-item-title">{detection.bookName} {detection.chapter}:{detection.verseStart}{detection.verseEnd ? "-" + detection.verseEnd : ""}</strong>
-                                        <span class="stt-item-conf">{formatConfidence(detection.confidence)}</span>
+                                        <span class="stt-item-meta">
+                                            <span class="stt-item-source" title={detection.source}>{formatSource(detection.source)}</span>
+                                            <span class="stt-item-conf">{formatConfidence(detection.confidence)}</span>
+                                        </span>
                                     </div>
                                     {#if detection.transcriptSnippet}
                                         <p class="stt-item-desc">"{detection.transcriptSnippet}"</p>
@@ -538,6 +547,22 @@
         font-size: 13px;
         color: var(--text);
         word-break: break-word;
+    }
+    .stt-item-meta {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        flex-shrink: 0;
+    }
+    .stt-item-source {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--text);
+        opacity: 0.65;
+        background: var(--hover);
+        padding: 2px 5px;
+        border-radius: 4px;
     }
     .stt-item-conf {
         font-size: 11px;

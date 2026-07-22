@@ -15,11 +15,15 @@ let installed = false
 
 function normalizeSavedSettings(parsed: Partial<SttSettingsData>): Partial<SttSettingsData> {
     // Force Nemotron — remap any older/unknown model ids from prior settings backups
+    const next: Partial<SttSettingsData> = { ...parsed }
     if (typeof parsed.model !== "string" || parsed.model !== DEFAULT_MODEL_ID) {
-        return { ...parsed, model: DEFAULT_MODEL_ID }
+        next.model = DEFAULT_MODEL_ID
     }
-
-    return parsed
+    // Older backups lack the quotation toggle — default ON
+    if (typeof parsed.matchQuotedVerseText !== "boolean") {
+        next.matchQuotedVerseText = true
+    }
+    return next
 }
 
 /** Restore previously-saved settings into the store (call once at startup). */

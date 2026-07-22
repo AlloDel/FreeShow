@@ -3,9 +3,10 @@
 // Supports multiple Bible versions (KJV, NIV, NKJV, etc.) via the scriptures store.
 
 import { get } from "svelte/store"
+import type { Bible } from "../../types/Bible"
 import type { BibleDetection } from "../../types/Stt"
 import { BIBLE_BOOKS } from "./books"
-import { activeScripture, drawerTabsData, scriptures } from "../stores"
+import { activeScripture, drawerTabsData, scriptures, scripturesCache } from "../stores"
 import { sttError } from "./sttStore"
 
 /**
@@ -23,6 +24,58 @@ export function getAvailableBibleVersions(): { id: string; name: string }[] {
         })
         .sort((a, b) => Number(b.isCollection) - Number(a.isCollection))
         .map(({ id, name }) => ({ id, name }))
+}
+
+/**
+ * Resolve which scripture id to use for STT display / quote indexing.
+ * Prefer the explicit STT setting; otherwise the active drawer tab; otherwise first local bible.
+ * Collections resolve to their first contained version (quote index needs verse text).
+ */
+export function resolveSttBibleVersionId(preferredId?: string): string | null {
+    const all = get(scriptures)
+    const ids = Object.keys(all)
+    if (!ids.length) return null
+
+    const pick = (id: string | null | undefined): string | null => {
+        if (!id || !all[id]) return null
+        const data = all[id] as any
+        if (data.collection?.versions?.length) {
+            const first = data.collection.versions.find((v: string) => all[v] && !(all[v] as any).collection)
+            return first || null
+        }
+        return id
+    }
+
+    return pick(preferredId) || pick(get(drawerTabsData)?.scripture?.activeSubTab) || pick(ids[0])
+}
+
+/**
+ * Load raw Bible JSON suitable for building the quotation inverted index.
+ * Uses scripturesCache / loadJsonBible — no parallel Bible pipeline.
+ */
+export async function loadBibleForQuoteIndex(bibleVersionId?: string): Promise<{ id: string; bible: Bible } | null> {
+    const id = resolveSttBibleVersionId(bibleVersionId)
+    if (!id) return null
+
+    const cached = get(scripturesCache)[id]
+    if (cached?.books?.length) return { id, bible: cached }
+
+    try {
+        const { loadJsonBible } = await import("../components/drawer/bible/scripture")
+        const instance = await loadJsonBible(id)
+        if (!instance) return null
+
+        // Prefer cache filled by loadJsonBible; fall back to instance.data
+        const fromCache = get(scripturesCache)[id]
+        if (fromCache?.books?.length) return { id, bible: fromCache }
+
+        const data = (instance as any).data as Bible | undefined
+        if (data?.books?.length) return { id, bible: data }
+    } catch (err) {
+        console.warn("[STT] Could not load Bible for quote index:", err)
+    }
+
+    return null
 }
 
 /**

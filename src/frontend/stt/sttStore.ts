@@ -41,6 +41,11 @@ export const sttDetections: Writable<BibleDetection[]> = writable([])
 export interface SttSettingsData {
     model: string
     autoShowBible: boolean
+    /**
+     * Match spoken verse wording against the active Bible translation (progressive
+     * quote-by-content on ASR partials). Default ON — disable if false positives.
+     */
+    matchQuotedVerseText: boolean
     confidenceThreshold: number
     microphoneId: string
     /** Selected Bible version ID for displaying detected verses. Empty = use current active. */
@@ -50,6 +55,7 @@ export interface SttSettingsData {
 export const sttSettings: Writable<SttSettingsData> = writable({
     model: "nemotron-en-int8",
     autoShowBible: false,
+    matchQuotedVerseText: true,
     confidenceThreshold: 0.85,
     microphoneId: "",
     bibleVersionId: ""

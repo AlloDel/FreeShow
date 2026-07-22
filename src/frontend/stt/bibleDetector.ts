@@ -121,6 +121,15 @@ export class BibleDetector {
         this.recentDetections = []
     }
 
+    /**
+     * Adopt a non-reference detection (e.g. quotation match) as warm context so
+     * follow-up "verse N" / next / previous commands still resolve.
+     */
+    adoptExternalDetection(detection: BibleDetection): void {
+        this.setContext(detection, false)
+        this.pushRecent(detection)
+    }
+
     // --- Direct references ---
 
     private detectDirect(cleaned: string): BibleDetection[] {
@@ -553,7 +562,7 @@ export class BibleDetector {
         return Math.min(1.0, confidence)
     }
 
-    private makeDetection(bookNumber: number, bookName: string, chapter: number, verseStart: number, verseEnd: number | undefined, confidence: number, snippet: string, source: "direct" | "contextual"): BibleDetection {
+    private makeDetection(bookNumber: number, bookName: string, chapter: number, verseStart: number, verseEnd: number | undefined, confidence: number, snippet: string, source: "direct" | "contextual" | "quotation"): BibleDetection {
         return {
             id: uid(),
             bookNumber,

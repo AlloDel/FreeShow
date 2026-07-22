@@ -6,15 +6,36 @@ import type { BibleDetection, SttStatus, TranscriptEvent, ModelInfo } from "../.
 import { sttBibleVersions, sttDetections, sttEnabled, sttError, sttModels, sttPartialTranscript, sttSettings, sttStatus, sttTranscript } from "./sttStore"
 import { installSttSettingsAutoBackup, restoreSttSettings } from "./sttSettingsBackup"
 import { BibleDetector } from "./bibleDetector"
+import { QuoteMatcher } from "./quoteMatcher"
 
 const STT_CHANNEL = "STT"
 
-/** The single Bible detection layer — all detection happens here in the frontend. */
+/** Reference detector (John 3:16 / contextual verse jumps) — high precision. */
 const bibleDetector = new BibleDetector()
+/** Quote-by-content matcher (spoken verse text vs active translation) — progressive on partials. */
+const quoteMatcher = new QuoteMatcher()
+
+let quoteIndexPromise: Promise<void> | null = null
+let quoteIndexRequestId = 0
+let quoteIndexWatchedVersion = ""
 
 // Restore any persisted settings on first import, then keep them in sync.
 restoreSttSettings()
 installSttSettingsAutoBackup()
+
+// Rebuild the quotation index when Bible version or quote-match setting changes.
+sttSettings.subscribe((settings) => {
+    const key = `${settings.matchQuotedVerseText ? "1" : "0"}:${settings.bibleVersionId || ""}`
+    if (key === quoteIndexWatchedVersion) return
+    quoteIndexWatchedVersion = key
+    if (!settings.matchQuotedVerseText) {
+        quoteMatcher.clear()
+        quoteIndexPromise = null
+        quoteIndexRequestId++
+        return
+    }
+    void ensureQuoteIndex(true)
+})
 
 // Audio capture state
 let audioContext: AudioContext | null = null
@@ -138,6 +159,7 @@ export async function startStt(): Promise<void> {
     }
 
     sttEnabled.set(true)
+    void ensureQuoteIndex()
     console.log("[STT] Started audio capture")
 }
 
@@ -146,6 +168,7 @@ export function stopStt(): void {
     flushPendingDetections(false)
     endUtterance()
     bibleDetector.reset()
+    quoteMatcher.resetCooldown()
 
     // Stop audio capture
     if (scriptProcessor) {
@@ -318,31 +341,87 @@ function normalizeForCompare(text: string): string {
         .trim()
 }
 
+function scheduleDetection(detection: BibleDetection): void {
+    const key = detectionKey(detection)
+
+    // A newer verse for the same book+chapter replaces a still-pending older one
+    // (the earlier partial saw a prefix of the verse number)
+    pendingDetections.forEach((entry, existingKey) => {
+        if (existingKey === key) return
+        if (entry.detection.bookNumber === detection.bookNumber && entry.detection.chapter === detection.chapter) {
+            clearTimeout(entry.timer)
+            pendingDetections.delete(existingKey)
+        }
+    })
+
+    if (pendingDetections.has(key) || utteranceCommittedKeys.has(key)) return
+    const timer = setTimeout(() => {
+        pendingDetections.delete(key)
+        utteranceCommittedKeys.add(key)
+        handleDetection(detection)
+    }, PARTIAL_COMMIT_DELAY_MS)
+    pendingDetections.set(key, { detection, timer })
+}
+
 function processPartialDetections(transcript: string): void {
     if (transcript === lastDetectorInput) return
     lastDetectorInput = transcript
 
-    bibleDetector.processTranscript(transcript).forEach((detection) => {
-        const key = detectionKey(detection)
+    const referenceHits = bibleDetector.processTranscript(transcript)
+    referenceHits.forEach((detection) => scheduleDetection(detection))
 
-        // A newer verse for the same book+chapter replaces a still-pending older one
-        // (the earlier partial saw a prefix of the verse number)
-        pendingDetections.forEach((entry, existingKey) => {
-            if (existingKey === key) return
-            if (entry.detection.bookNumber === detection.bookNumber && entry.detection.chapter === detection.chapter) {
-                clearTimeout(entry.timer)
-                pendingDetections.delete(existingKey)
-            }
-        })
+    // Ensemble: reference path wins when both could fire for this window.
+    // Quotation is a parallel candidate source for quote-without-citation speech.
+    if (!referenceHits.length) {
+        const quoteHit = tryQuoteMatch(transcript)
+        if (quoteHit) scheduleDetection(quoteHit)
+    }
+}
 
-        if (pendingDetections.has(key) || utteranceCommittedKeys.has(key)) return
-        const timer = setTimeout(() => {
-            pendingDetections.delete(key)
-            utteranceCommittedKeys.add(key)
-            handleDetection(detection)
-        }, PARTIAL_COMMIT_DELAY_MS)
-        pendingDetections.set(key, { detection, timer })
-    })
+/** Ensure the quotation inverted index matches the active STT Bible version. */
+async function ensureQuoteIndex(force = false): Promise<void> {
+    const settings = get(sttSettings)
+    if (!settings.matchQuotedVerseText) {
+        quoteMatcher.clear()
+        return
+    }
+
+    if (!force && quoteIndexPromise) return quoteIndexPromise
+
+    const requestId = ++quoteIndexRequestId
+    quoteIndexPromise = (async () => {
+        try {
+            const { loadBibleForQuoteIndex } = await import("./sttScriptureHelper")
+            const loaded = await loadBibleForQuoteIndex(settings.bibleVersionId || undefined)
+            if (requestId !== quoteIndexRequestId) return
+            if (!loaded) return
+            if (!force && quoteMatcher.isReady(loaded.id)) return
+            quoteMatcher.buildIndex(loaded.id, loaded.bible)
+            console.log(`[STT] Quote index ready (${loaded.id}, ${quoteMatcher.getVerseCount()} verses)`)
+        } catch (err) {
+            console.warn("[STT] Quote index build failed:", err)
+        } finally {
+            if (requestId === quoteIndexRequestId) quoteIndexPromise = null
+        }
+    })()
+
+    return quoteIndexPromise
+}
+
+function tryQuoteMatch(transcript: string): BibleDetection | null {
+    const settings = get(sttSettings)
+    if (!settings.matchQuotedVerseText) return null
+    if (!quoteMatcher.isReady()) {
+        void ensureQuoteIndex()
+        return null
+    }
+
+    const result = quoteMatcher.match(transcript)
+    if (!result) return null
+
+    // Warm reference context so "verse 17" / next / previous still work after a quote hit.
+    bibleDetector.adoptExternalDetection(result.detection)
+    return result.detection
 }
 
 function flushPendingDetections(commit: boolean): void {
@@ -377,10 +456,13 @@ function handleTranscript(event: TranscriptEvent): void {
                     flushPendingDetections(true)
                 } else {
                     flushPendingDetections(false)
-                    bibleDetector
-                        .processTranscript(event.transcript)
-                        .filter((d) => !utteranceCommittedKeys.has(detectionKey(d)))
-                        .forEach((d) => handleDetection(d))
+                    const referenceHits = bibleDetector.processTranscript(event.transcript).filter((d) => !utteranceCommittedKeys.has(detectionKey(d)))
+                    if (referenceHits.length) {
+                        referenceHits.forEach((d) => handleDetection(d))
+                    } else {
+                        const quoteHit = tryQuoteMatch(event.transcript)
+                        if (quoteHit && !utteranceCommittedKeys.has(detectionKey(quoteHit))) handleDetection(quoteHit)
+                    }
                 }
                 endUtterance()
             }
@@ -388,11 +470,13 @@ function handleTranscript(event: TranscriptEvent): void {
         case "connected":
             sttStatus.update((s) => ({ ...s, connected: true, modelLoaded: true }))
             sttError.set("")
+            void ensureQuoteIndex()
             break
         case "disconnected":
             flushPendingDetections(false)
             endUtterance()
             bibleDetector.reset()
+            quoteMatcher.resetCooldown()
             sttStatus.update((s) => ({ ...s, connected: false }))
             break
         case "error":
@@ -400,6 +484,7 @@ function handleTranscript(event: TranscriptEvent): void {
             flushPendingDetections(false)
             endUtterance()
             bibleDetector.reset()
+            quoteMatcher.resetCooldown()
             sttError.set(event.error || "Unknown error")
             sttStatus.update((s) => ({ ...s, connected: false }))
             break
@@ -455,6 +540,7 @@ function autoShowIfEnabled(detection: BibleDetection): void {
     if (detection.source === "contextual" && !hasExplicitVerseInSnippet(detection.transcriptSnippet) && !isVerseJumpOrCommand(detection.transcriptSnippet)) {
         return
     }
+    // Quotation matches already passed a higher bar in QuoteMatcher; still respect auto-show toggle.
     if (settings.autoShowBible) {
         import("./sttScriptureHelper").then(({ showDetection }) => {
             showDetection(detection, settings.bibleVersionId || undefined)
