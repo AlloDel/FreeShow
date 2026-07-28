@@ -46,6 +46,11 @@ export interface SttSettingsData {
      * quote-by-content on ASR partials). Default ON — disable if false positives.
      */
     matchQuotedVerseText: boolean
+    /**
+     * Append structured STT events to userData/stt-debug.log (and console).
+     * Default ON for bible testing — turn off to stop file writes.
+     */
+    debugLogging: boolean
     confidenceThreshold: number
     microphoneId: string
     /** Selected Bible version ID for displaying detected verses. Empty = use current active. */
@@ -56,10 +61,14 @@ export const sttSettings: Writable<SttSettingsData> = writable({
     model: "nemotron-en-int8",
     autoShowBible: false,
     matchQuotedVerseText: true,
+    debugLogging: true,
     confidenceThreshold: 0.85,
     microphoneId: "",
     bibleVersionId: ""
 })
+
+/** Absolute path of the main-process STT debug log (set via IPC). */
+export const sttDebugLogPath: Writable<string> = writable("")
 
 // --- Models ---
 

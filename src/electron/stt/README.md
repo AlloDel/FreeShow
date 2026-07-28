@@ -68,14 +68,16 @@ the same `{ channel, data }` envelope pattern as `receiveAudio.ts`. `receiveStt.
 
 | Channel          | Payload                                              | Effect                                                                                    |
 | ---------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `START`          | `{ modelId? }`                                       | Creates a `SttEngine`, loads the (already-downloaded) model, starts streaming recognition |
-| `STOP`           | —                                                    | Stops and tears down the engine                                                           |
-| `AUDIO_DATA`     | `Int16Array` / `Float32Array` / typed-array-like PCM | Fed into the running engine (converted to Float32 if needed)                              |
-| `GET_STATUS`     | —                                                    | Requests a `STATUS` reply                                                                 |
-| `DOWNLOAD_MODEL` | `{ modelId }`                                        | Downloads all files for a model, reporting progress                                       |
-| `DELETE_MODEL`   | `modelId` (string)                                   | Deletes a model's directory from disk                                                     |
-| `SET_MODEL`      | `{ modelId }`                                        | Switches the active model (only if already downloaded)                                    |
-| `GET_MODELS`     | —                                                    | Requests a `MODELS_LIST` reply                                                            |
+| `START`              | `{ modelId?, debugLogging? }`                        | Creates a `SttEngine`, loads the (already-downloaded) model, starts streaming recognition |
+| `STOP`               | —                                                    | Stops and tears down the engine                                                           |
+| `AUDIO_DATA`         | `Int16Array` / `Float32Array` / typed-array-like PCM | Fed into the running engine (converted to Float32 if needed)                              |
+| `GET_STATUS`         | —                                                    | Requests a `STATUS` reply                                                                 |
+| `DOWNLOAD_MODEL`     | `{ modelId }`                                        | Downloads all files for a model, reporting progress                                       |
+| `DELETE_MODEL`       | `modelId` (string)                                   | Deletes a model's directory from disk                                                     |
+| `SET_MODEL`          | `{ modelId }`                                        | Switches the active model (only if already downloaded)                                    |
+| `GET_MODELS`         | —                                                    | Requests a `MODELS_LIST` reply                                                            |
+| `DEBUG_LOG`          | `{ line }` or `{ message }`                          | Appends a line to `userData/stt-debug.log` and mirrors `[STT:debug]` to console           |
+| `GET_DEBUG_LOG_PATH` | —                                                    | Requests a `DEBUG_LOG_PATH` reply                                                         |
 
 **Electron → Frontend** (sent via `toApp("STT", { channel, data })`):
 
@@ -85,11 +87,19 @@ the same `{ channel, data }` envelope pattern as `receiveAudio.ts`. `receiveStt.
 | `STATUS`            | `{ enabled, connected, modelLoaded, modelName, isDownloading, downloadProgress, downloadTotal }` | Current engine/model status                               |
 | `DOWNLOAD_PROGRESS` | `{ modelId, downloaded, total }`                                                                 | Bytes downloaded so far for an in-progress model download |
 | `MODELS_LIST`       | `ModelInfo[]`                                                                                    | All known models with `downloaded`/`active` flags         |
+| `DEBUG_LOG_PATH`    | `{ path }`                                                                                       | Absolute path of `stt-debug.log` under userData           |
+
+## Debug log file
+
+When STT **Debug logging** is enabled (frontend setting, default on), session start/stop and
+renderer events are appended to `<userData>/stt-debug.log`. See `src/frontend/stt/README.md`
+for what is logged and how to share the file for bible testing.
 
 ## Files
 
 - `sttEngine.ts` — sherpa-onnx streaming recognizer wrapper (audio in → transcript events out).
 - `bibleHotwords.ts` — reference-only hotwords file (attempted; falls back to greedy).
 - `modelManager.ts` — model catalog, download/delete, path resolution, active-model tracking.
+- `sttDebugLog.ts` — appends greppable `[STT:debug]` lines to `userData/stt-debug.log`.
 - `receiveStt.ts` — IPC router; owns the single live `SttEngine` instance and translates IPC
   messages into engine calls / status broadcasts.

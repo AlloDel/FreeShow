@@ -23,6 +23,10 @@ function normalizeSavedSettings(parsed: Partial<SttSettingsData>): Partial<SttSe
     if (typeof parsed.matchQuotedVerseText !== "boolean") {
         next.matchQuotedVerseText = true
     }
+    // Older backups lack debug logging — default ON for bible testing
+    if (typeof parsed.debugLogging !== "boolean") {
+        next.debugLogging = true
+    }
     return next
 }
 

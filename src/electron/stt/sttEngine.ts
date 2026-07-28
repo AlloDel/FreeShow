@@ -56,6 +56,11 @@ export class SttEngine extends EventEmitter {
     private prerollSamples = 0
     private usingHotwords = false
 
+    /** Whether the live recognizer was created with hotwords (false after greedy fallback). */
+    get isUsingHotwords(): boolean {
+        return this.usingHotwords
+    }
+
     /**
      * Create the recognizer + VAD and start accepting audio.
      * @param hotwordsFile optional path to a sherpa hotwords file (bible reference vocab)

@@ -1,7 +1,8 @@
 <script lang="ts">
     import { onMount } from "svelte"
-    import { sttBibleVersions, sttModels, sttSettings, sttStatus } from "./sttStore"
+    import { sttBibleVersions, sttDebugLogPath, sttModels, sttSettings, sttStatus } from "./sttStore"
     import { downloadModel, deleteModel, getMicrophones, refreshBibleVersions, requestModels, setModel } from "./sttManager"
+    import { requestSttDebugLogPath } from "./sttDebug"
 
     let microphones: MediaDeviceInfo[] = []
     const importMetaEnv = import.meta as unknown as { env?: { DEV?: boolean } }
@@ -9,6 +10,7 @@
     onMount(async () => {
         requestModels()
         refreshBibleVersions()
+        requestSttDebugLogPath()
         try {
             microphones = await getMicrophones()
         } catch {
@@ -42,6 +44,11 @@
 
     function toggleMatchQuotedVerseText() {
         sttSettings.update((s) => ({ ...s, matchQuotedVerseText: !s.matchQuotedVerseText }))
+    }
+
+    function toggleDebugLogging() {
+        sttSettings.update((s) => ({ ...s, debugLogging: !s.debugLogging }))
+        if (!$sttDebugLogPath) requestSttDebugLogPath()
     }
 
     function handleDownload(modelId: string) {
@@ -120,6 +127,14 @@
         <label class="stt-setting-label" for="match-quoted-verse" title="Match spoken verse wording against your Bible translation on streaming transcripts (default on)">Match quoted verse text</label>
         <input type="checkbox" id="match-quoted-verse" class="stt-checkbox" checked={$sttSettings.matchQuotedVerseText} on:change={toggleMatchQuotedVerseText} />
     </div>
+
+    <div class="stt-setting-row">
+        <label class="stt-setting-label" for="stt-debug-logging" title="Write structured STT events to stt-debug.log for bible testing (default on)">Debug logging</label>
+        <input type="checkbox" id="stt-debug-logging" class="stt-checkbox" checked={$sttSettings.debugLogging} on:change={toggleDebugLogging} />
+    </div>
+    {#if $sttSettings.debugLogging && $sttDebugLogPath}
+        <div class="stt-debug-path" title={$sttDebugLogPath}>Writing to: {$sttDebugLogPath}</div>
+    {/if}
 
     <!-- Microphone -->
     <div class="stt-setting-row">
@@ -200,6 +215,16 @@
         font-size: 11px;
         color: var(--connected);
         opacity: 0.9;
+    }
+
+    .stt-debug-path {
+        font-size: 10px;
+        color: var(--text);
+        opacity: 0.55;
+        word-break: break-all;
+        line-height: 1.35;
+        margin-top: -4px;
+        padding: 0 2px 4px;
     }
 
     .stt-select {

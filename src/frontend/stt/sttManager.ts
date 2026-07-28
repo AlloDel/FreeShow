@@ -3,10 +3,11 @@
 
 import { get } from "svelte/store"
 import type { BibleDetection, SttStatus, TranscriptEvent, ModelInfo } from "../../types/Stt"
-import { sttBibleVersions, sttDetections, sttEnabled, sttError, sttModels, sttPartialTranscript, sttSettings, sttStatus, sttTranscript } from "./sttStore"
+import { sttBibleVersions, sttDebugLogPath, sttDetections, sttEnabled, sttError, sttModels, sttPartialTranscript, sttSettings, sttStatus, sttTranscript } from "./sttStore"
 import { installSttSettingsAutoBackup, restoreSttSettings } from "./sttSettingsBackup"
 import { BibleDetector, extractTranslationCommand } from "./bibleDetector"
 import { QuoteMatcher } from "./quoteMatcher"
+import { formatDetectionDebugLine, requestSttDebugLogPath, resetSttDebugPartialThrottle, sttDebug, sttDebugPartial } from "./sttDebug"
 
 const STT_CHANNEL = "STT"
 
@@ -67,6 +68,7 @@ export async function startStt(): Promise<void> {
         mediaStream = await navigator.mediaDevices.getUserMedia(constraints)
     } catch (err) {
         console.error("[STT] Microphone access denied:", err)
+        sttDebug(`error mic_denied "${err instanceof Error ? err.message : String(err)}"`)
         sttError.set("Microphone access denied. Please grant permission.")
         sttEnabled.set(false)
         return
@@ -138,9 +140,10 @@ export async function startStt(): Promise<void> {
         mutedMonitor.connect(audioContext.destination)
 
         // Tell electron to start the streaming STT engine (NVIDIA Nemotron)
-        sendStt("START", { modelId: settings.model })
+        sendStt("START", { modelId: settings.model, debugLogging: settings.debugLogging !== false })
     } catch (err) {
         console.error("[STT] Audio setup failed:", err)
+        sttDebug(`error audio_setup "${err instanceof Error ? err.message : String(err)}"`)
 
         // Ensure the mic is never left hot if any step in audio graph setup fails
         if (mediaStream) {
@@ -159,6 +162,11 @@ export async function startStt(): Promise<void> {
     }
 
     sttEnabled.set(true)
+    resetSttDebugPartialThrottle()
+    sttDebug(
+        `session settings model=${settings.model} autoShow=${settings.autoShowBible} quoteMatch=${settings.matchQuotedVerseText} threshold=${settings.confidenceThreshold} bible=${settings.bibleVersionId || "auto"} mic=${settings.microphoneId || "default"}`
+    )
+    requestSttDebugLogPath()
     void ensureQuoteIndex()
     console.log("[STT] Started audio capture")
 }
@@ -196,6 +204,8 @@ export function stopStt(): void {
     sttTranscript.set("")
     sttError.set("")
     sttStatus.update((s) => ({ ...s, connected: false }))
+    resetSttDebugPartialThrottle()
+    sttDebug("session frontend_stop")
     console.log("[STT] Stopped audio capture")
 }
 
@@ -309,6 +319,9 @@ function handleSttMessage(msg: { channel: string; data: any }): void {
         case "MODELS_LIST":
             sttModels.set(msg.data as ModelInfo[])
             break
+        case "DEBUG_LOG_PATH":
+            if (typeof msg.data?.path === "string") sttDebugLogPath.set(msg.data.path)
+            break
     }
 }
 
@@ -397,12 +410,17 @@ async function ensureQuoteIndex(force = false): Promise<void> {
             const { loadBibleForQuoteIndex } = await import("./sttScriptureHelper")
             const loaded = await loadBibleForQuoteIndex(settings.bibleVersionId || undefined)
             if (requestId !== quoteIndexRequestId) return
-            if (!loaded) return
+            if (!loaded) {
+                sttDebug("quote_index skipped (bible not loaded)")
+                return
+            }
             if (!force && quoteMatcher.isReady(loaded.id)) return
             quoteMatcher.buildIndex(loaded.id, loaded.bible)
             console.log(`[STT] Quote index ready (${loaded.id}, ${quoteMatcher.getVerseCount()} verses)`)
+            sttDebug(`quote_index ready id=${loaded.id} verses=${quoteMatcher.getVerseCount()}`)
         } catch (err) {
             console.warn("[STT] Quote index build failed:", err)
+            sttDebug(`error quote_index "${err instanceof Error ? err.message : String(err)}"`)
         } finally {
             if (requestId === quoteIndexRequestId) quoteIndexPromise = null
         }
@@ -445,6 +463,7 @@ function handleTranscript(event: TranscriptEvent): void {
         case "partial":
             if (event.transcript) {
                 sttPartialTranscript.set(event.transcript)
+                sttDebugPartial(event.transcript)
                 processPartialDetections(event.transcript)
             }
             break
@@ -452,6 +471,7 @@ function handleTranscript(event: TranscriptEvent): void {
             if (event.transcript) {
                 sttTranscript.set(event.transcript)
                 sttPartialTranscript.set("")
+                sttDebug(`final "${event.transcript.replace(/\s+/g, " ").trim().slice(0, 160)}"`)
 
                 // Spoken translation switch (finals only — see processPartialDetections)
                 if (tryTranslationSwitch(event.transcript)) {
@@ -480,6 +500,7 @@ function handleTranscript(event: TranscriptEvent): void {
         case "connected":
             sttStatus.update((s) => ({ ...s, connected: true, modelLoaded: true }))
             sttError.set("")
+            sttDebug("engine connected")
             void ensureQuoteIndex()
             break
         case "disconnected":
@@ -488,9 +509,11 @@ function handleTranscript(event: TranscriptEvent): void {
             bibleDetector.reset()
             quoteMatcher.resetCooldown()
             sttStatus.update((s) => ({ ...s, connected: false }))
+            sttDebug("engine disconnected")
             break
         case "error":
             console.error("[STT] Engine error:", event.error)
+            sttDebug(`error engine "${event.error || "unknown"}"`)
             flushPendingDetections(false)
             endUtterance()
             bibleDetector.reset()
@@ -505,7 +528,16 @@ function handleDetection(detection: BibleDetection): void {
     const settings = get(sttSettings)
 
     // Skip low-confidence detections
-    if (detection.confidence < settings.confidenceThreshold) return
+    if (detection.confidence < settings.confidenceThreshold) {
+        sttDebug(`${formatDetectionDebugLine(detection)} skipped=below_threshold min=${settings.confidenceThreshold}`)
+        return
+    }
+
+    if (isVerseJumpOrCommand(detection.transcriptSnippet)) {
+        sttDebug(`voice_command snippet="${detection.transcriptSnippet.replace(/\s+/g, " ").trim().slice(0, 80)}" → ${detection.bookName} ${detection.chapter}:${detection.verseStart}`)
+    }
+
+    sttDebug(formatDetectionDebugLine(detection))
 
     // Add to front of list, limit to 10
     sttDetections.update((list) => {
@@ -561,13 +593,16 @@ function tryTranslationSwitch(transcript: string): boolean {
         const applied = applySpokenBibleVersion(spoken)
         if (!applied) {
             console.log(`[STT] Translation "${spoken}" not found in installed scriptures`)
+            sttDebug(`translation_switch fail spoken="${spoken}"`)
             return
         }
         console.log(`[STT] Switched Bible version to ${applied.name} (${applied.id})`)
+        sttDebug(`translation_switch ok spoken="${spoken}" → ${applied.name} (${applied.id})`)
         const latest = bibleDetector.getLatestDetection()
         const settings = get(sttSettings)
         if (latest && settings.autoShowBible) {
             void showDetection(latest, applied.id)
+            sttDebug(`auto_show projected (after translation) ${latest.bookName} ${latest.chapter}:${latest.verseStart}`)
         }
     })
 
@@ -577,6 +612,7 @@ function tryTranslationSwitch(transcript: string): boolean {
 function autoShowIfEnabled(detection: BibleDetection): void {
     const settings = get(sttSettings)
     if (detection.source === "contextual" && !hasExplicitVerseInSnippet(detection.transcriptSnippet) && !isVerseJumpOrCommand(detection.transcriptSnippet)) {
+        sttDebug(`auto_show skipped reason=contextual_no_explicit_verse ${detection.bookName} ${detection.chapter}:${detection.verseStart}`)
         return
     }
     // Quotation matches already passed a higher bar in QuoteMatcher; still respect auto-show toggle.
@@ -584,6 +620,9 @@ function autoShowIfEnabled(detection: BibleDetection): void {
         import("./sttScriptureHelper").then(({ showDetection }) => {
             showDetection(detection, settings.bibleVersionId || undefined)
         })
+        sttDebug(`auto_show projected ${detection.bookName} ${detection.chapter}:${detection.verseStart}`)
+    } else {
+        sttDebug(`auto_show skipped reason=disabled ${detection.bookName} ${detection.chapter}:${detection.verseStart}`)
     }
 }
 

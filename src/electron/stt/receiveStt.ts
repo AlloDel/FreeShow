@@ -7,9 +7,17 @@ import type { SttMessage, SttStartPayload, TranscriptEvent } from "../../types/S
 import { toApp } from "../index"
 import { ensureBibleHotwordsFile } from "./bibleHotwords"
 import { deleteModel, downloadModel, ensureVadModel, getActiveModelId, getModelPaths, getModels, setActiveModel } from "./modelManager"
+import { appendSttDebugLog, getSttDebugLogPath } from "./sttDebugLog"
 import { SttEngine } from "./sttEngine"
 
 let engine: SttEngine | null = null
+/** Mirrors renderer `sttSettings.debugLogging` for main-originated session/error lines. */
+let debugLoggingEnabled = true
+
+function maybeDebug(message: string): void {
+    if (!debugLoggingEnabled) return
+    appendSttDebugLog(message)
+}
 
 function int16ToFloat32(data: Int16Array): Float32Array {
     const samples = new Float32Array(data.length)
@@ -52,6 +60,12 @@ export function receiveStt(_e: IpcMainEvent, msg: SttMessage): void {
         case "GET_MODELS":
             sendModelsList()
             break
+        case "DEBUG_LOG":
+            handleDebugLog(data)
+            break
+        case "GET_DEBUG_LOG_PATH":
+            sendDebugLogPath()
+            break
         default:
             console.warn(`[STT] Unknown channel: ${channel}`)
     }
@@ -66,8 +80,10 @@ async function startStt(payload: SttStartPayload): Promise<void> {
     }
 
     const modelId = payload?.modelId || getActiveModelId()
+    debugLoggingEnabled = payload?.debugLogging !== false
     const paths = getModelPaths(modelId)
     if (!paths) {
+        maybeDebug(`error model_not_downloaded model=${modelId}`)
         sendToApp("TRANSCRIPT", { type: "error", error: `Model not downloaded: ${modelId}. Open settings to download it.` })
         return
     }
@@ -91,13 +107,18 @@ async function startStt(payload: SttStartPayload): Promise<void> {
             // If the engine reported an error/disconnect and is no longer running, clear the
             // module-level reference so status reports (e.g. modelLoaded) reflect reality.
             if ((event.type === "error" || event.type === "disconnected") && engine && !engine.isRunning) engine = null
+            if (event.type === "error") maybeDebug(`error engine "${event.error || "unknown"}"`)
         })
         engine.start(paths, vadModelPath, hotwordsFile)
         setActiveModel(modelId)
         sendStatus()
+        sendDebugLogPath()
+        const decoding = engine.isUsingHotwords ? "hotwords" : "greedy_fallback"
+        maybeDebug(`session start model=${modelId} decoding=${decoding} hotwordsFile=${hotwordsFile ? "yes" : "no"} log=${getSttDebugLogPath()}`)
         console.log(`[STT] Started with model: ${modelId}`)
     } catch (err) {
         console.error("[STT] Failed to start:", err)
+        maybeDebug(`error start_failed "${err instanceof Error ? err.message : String(err)}"`)
         if (engine) {
             try {
                 engine.stop()
@@ -116,11 +137,33 @@ function stopStt(): void {
             engine.stop()
         } catch (err) {
             console.error("[STT] Error during stop:", err)
+            maybeDebug(`error stop_failed "${err instanceof Error ? err.message : String(err)}"`)
         }
         engine = null
     }
     sendStatus()
-    console.log("[STT] Stopped")
+    const logPath = getSttDebugLogPath()
+    maybeDebug(`session stop log=${logPath}`)
+    if (debugLoggingEnabled) console.log(`[STT] Stopped — debug log: ${logPath}`)
+    else console.log("[STT] Stopped")
+}
+
+function handleDebugLog(data: { line?: string; message?: string } | string): void {
+    if (typeof data === "string") {
+        appendSttDebugLog(data)
+        return
+    }
+    if (data?.line) {
+        appendSttDebugLog(data.line)
+        return
+    }
+    if (data?.message) {
+        appendSttDebugLog(data.message)
+    }
+}
+
+function sendDebugLogPath(): void {
+    sendToApp("DEBUG_LOG_PATH", { path: getSttDebugLogPath() })
 }
 
 function handleAudioData(data: any): void {
@@ -161,6 +204,7 @@ async function handleDownloadModel(data: { modelId: string }): Promise<void> {
         sendToApp("STATUS", { ...getStatusData(), isDownloading: false })
     } catch (err) {
         console.error(`[STT] Download failed: ${err}`)
+        appendSttDebugLog(`error download_failed model=${modelId} "${err instanceof Error ? err.message : String(err)}"`)
         sendToApp("STATUS", { ...getStatusData(), isDownloading: false })
         sendToApp("TRANSCRIPT", { type: "error", error: `Download failed: ${err instanceof Error ? err.message : String(err)}` })
     }

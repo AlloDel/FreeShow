@@ -18,11 +18,14 @@ export type SttChannel =
     | "DELETE_MODEL"
     | "SET_MODEL"
     | "GET_MODELS"
+    | "DEBUG_LOG"
+    | "GET_DEBUG_LOG_PATH"
     // Outgoing (electron → renderer)
     | "TRANSCRIPT"
     | "STATUS"
     | "DOWNLOAD_PROGRESS"
     | "MODELS_LIST"
+    | "DEBUG_LOG_PATH"
 
 /** Transcript events emitted by the STT engine. */
 export interface TranscriptEvent {
@@ -70,6 +73,8 @@ export interface ModelInfo {
 /** STT start message payload. */
 export interface SttStartPayload {
     modelId?: string
+    /** When true, main writes session/error lines to stt-debug.log. */
+    debugLogging?: boolean
 }
 
 /** Bible book reference data. */

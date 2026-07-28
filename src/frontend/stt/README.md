@@ -113,11 +113,41 @@ is called, which maps the detected book name to FreeShow's book index, sets the 
 version/tab (including scripture collections) and scripture reference, then calls the existing
 `playScripture()` pipeline.
 
+## Debug logging (`stt-debug.log`)
+
+For bible-testing sessions, leave **Debug logging** on in STT Settings (default **ON**, persisted
+in `sttSettingsBackup`). The renderer sends structured events over IPC (`DEBUG_LOG`); Electron
+appends them to:
+
+```
+<userData>/stt-debug.log
+```
+
+Typical paths:
+
+- macOS: `~/Library/Application Support/FreeShow/stt-debug.log`
+- Windows: `%APPDATA%/FreeShow/stt-debug.log`
+- Linux: `~/.config/FreeShow/stt-debug.log`
+
+The settings panel shows **Writing to: …** when the path is known. On STT stop, the console also
+prints the log path (`[STT] Stopped — debug log: …`).
+
+Share that file (or its contents) instead of copy-pasting the DevTools console. Lines look like:
+
+```
+2026-07-28T17:12:00.000Z [STT:debug] detect source=quote John 3:16 conf=0.91 "for God so loved…"
+```
+
+Logged (no audio chunks): session start/stop + model/decoding mode, settings summary, finals,
+throttled partials (~1s), detections, voice commands, translation switch ok/fail, auto-show
+projected/skipped (reason), quote-index ready, errors.
+
 ## Files
 
 - `sttStore.ts` — Svelte stores: enabled/status/transcript/detections/settings/models.
 - `sttManager.ts` — audio capture (AudioWorklet → 16 kHz PCM), IPC plumbing, transcript →
   detection → auto-show orchestration (reference + quotation ensemble).
+- `sttDebug.ts` — renderer debug helpers; formats lines and forwards to main via `DEBUG_LOG`.
 - `bibleDetector.ts` / `bibleDetector.test.ts` — the unified reference detector and its tests.
 - `quoteMatcher.ts` / `quoteMatcher.test.ts` — progressive quote-by-content matching.
 - `books.ts` — Bible book metadata, ASR confusion aliases, reference feedwords docs.
