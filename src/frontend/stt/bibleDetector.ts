@@ -44,13 +44,19 @@ const FILLER_PHRASES = [
 const PREVIOUS_VERSE_PHRASES = ["previous verse", "last verse", "that verse again", "go back to that verse", "back to that verse", "the same verse", "repeat that verse"]
 
 /** Phrases indicating the speaker wants to advance to the next verse. */
-const NEXT_VERSE_PHRASES = ["next verse", "following verse", "verse after that"]
+const NEXT_VERSE_PHRASES = ["next verse", "following verse", "verse after that", "next one"]
 
 /** Phrases indicating the speaker wants to advance to the next chapter (verse 1). */
 const NEXT_CHAPTER_PHRASES = ["next chapter", "following chapter", "chapter after that"]
 
 /** Phrases indicating the speaker wants to go back a chapter (verse 1). */
 const PREVIOUS_CHAPTER_PHRASES = ["previous chapter", "last chapter", "chapter before that", "go back a chapter", "back a chapter"]
+
+/**
+ * Verse cue words longest-first. "versus" MUST precede "verse" — ASR often writes
+ * "vs" as "versus", and a "verse" prefix match left "ersus" as a fake verse token.
+ */
+const VERSE_CUE = "(?:versus|verses|verse|vs|v)"
 
 /**
  * Known Bible translation aliases (longest first). Used only with explicit cue words
@@ -103,6 +109,13 @@ interface ActiveContext {
     verseEnd?: number
     /** Bare leading numbers ("16 for God so loved…") only count as verses right after a chapter-only mention. */
     allowBareVerse: boolean
+    /** Heard "verse"/"vs"/"versus" without a number — next lone number completes the verse. */
+    pendingVerseCue: boolean
+    setAt: number
+}
+
+interface PendingBook {
+    book: BookEntry
     setAt: number
 }
 
@@ -125,19 +138,26 @@ const FUZZY_CONFIDENCE_PENALTY = 0.08
 export class BibleDetector {
     private context: ActiveContext | null = null
     private recentDetections: BibleDetection[] = []
+    /** Book name heard alone — wait for a following chapter/verse utterance. */
+    private pendingBook: PendingBook | null = null
 
     /**
-     * Process a final transcript and return any Bible references found.
+     * Process a transcript and return any Bible references found.
      * Handles direct references, chapter-only mentions (synthesizes verse 1),
      * verse-only continuations against the active context, and voice commands
      * (next/previous verse, next/previous chapter).
+     *
+     * @param options.isFinal - When false (streaming partials), bare "next"/"back"
+     *   are ignored so "next chapter" is not stolen by a premature next-verse jump.
      */
-    processTranscript(text: string): BibleDetection[] {
+    processTranscript(text: string, options?: { isFinal?: boolean }): BibleDetection[] {
         if (!text) return []
+        const isFinal = options?.isFinal !== false
         const cleaned = this.cleanTranscript(text)
 
-        const next = this.checkNextVerseCommand(cleaned)
+        const next = this.checkNextVerseCommand(cleaned, isFinal)
         if (next) {
+            this.pendingBook = null
             this.setContext(next, false)
             this.pushRecent(next)
             return [next]
@@ -147,12 +167,15 @@ export class BibleDetector {
         if (previous) {
             // Re-firing the last detection means the speaker is still talking about it —
             // refresh the context window so a subsequent bare verse mention still resolves.
+            this.pendingBook = null
             this.setContext(previous, false)
             return [previous]
         }
 
         const nextChapter = this.checkNextChapterCommand(cleaned)
         if (nextChapter) {
+            this.pendingBook = null
+            // allowBareVerse so a following "verse N" / bare "4" / "next verse" resolves immediately
             this.setContext(nextChapter, true)
             this.pushRecent(nextChapter)
             return [nextChapter]
@@ -160,13 +183,24 @@ export class BibleDetector {
 
         const previousChapter = this.checkPreviousChapterCommand(cleaned)
         if (previousChapter) {
+            this.pendingBook = null
             this.setContext(previousChapter, true)
             this.pushRecent(previousChapter)
             return [previousChapter]
         }
 
+        // "verse" / "vs" / "versus" alone — keep context warm and wait for the number
+        if (this.notePendingVerseCue(cleaned)) return []
+
         const direct = this.detectDirect(cleaned)
-        if (direct.length) return direct
+        if (direct.length) {
+            this.pendingBook = null
+            return direct
+        }
+
+        // Book was named earlier ("Genesis"); this utterance is "3:16" / "chapter 3 verse 16" / "3"
+        const fromPendingBook = this.detectFromPendingBook(cleaned)
+        if (fromPendingBook.length) return fromPendingBook
 
         const contextual = this.detectContextual(cleaned)
         return contextual ? [contextual] : []
@@ -185,6 +219,7 @@ export class BibleDetector {
     reset(): void {
         this.context = null
         this.recentDetections = []
+        this.pendingBook = null
     }
 
     /**
@@ -192,6 +227,7 @@ export class BibleDetector {
      * follow-up "verse N" / next / previous commands still resolve.
      */
     adoptExternalDetection(detection: BibleDetection): void {
+        this.pendingBook = null
         this.setContext(detection, false)
         this.pushRecent(detection)
     }
@@ -203,7 +239,11 @@ export class BibleDetector {
 
         for (const match of this.findBooks(cleaned)) {
             const ref = this.parseReference(cleaned, match)
-            if (!ref) continue
+            if (!ref) {
+                // Book spoken with no chapter/verse yet ("Genesis", "turn to Zephaniah")
+                this.maybeSetPendingBook(cleaned, match)
+                continue
+            }
 
             if (ref.chapter > 0 && ref.chapter > match.book.maxChapters) continue
 
@@ -221,12 +261,13 @@ export class BibleDetector {
                     // a later verse-only mention doesn't fall outside the timeout.
                     this.context!.setAt = Date.now()
                     this.context!.allowBareVerse = true
+                    if (ref.pendingVerseCue) this.context!.pendingVerseCue = true
                     continue
                 }
 
                 const chapterOnlyConfidence = 0.86 - (match.fuzzy ? FUZZY_CONFIDENCE_PENALTY : 0)
                 const detection = this.makeDetection(match.book.number, match.book.name, ref.chapter, 1, undefined, chapterOnlyConfidence, cleaned, "contextual")
-                this.setContext(detection, true)
+                this.setContext(detection, true, ref.pendingVerseCue)
                 this.pushRecent(detection)
                 detections.push(detection)
                 continue
@@ -248,11 +289,16 @@ export class BibleDetector {
         if (!this.isContextLive()) return null
         const context = this.context!
 
-        const verse = this.extractVerseOnly(cleaned, context.allowBareVerse) || this.extractLoneNumber(cleaned)
+        const allowBare = context.allowBareVerse || context.pendingVerseCue
+        const verse = this.extractVerseOnly(cleaned, allowBare) || this.extractLoneNumber(cleaned)
         if (!verse) return null
 
         // No real change — same verse as the active context
         if (verse.start === context.verseStart && verse.end === context.verseEnd) return null
+
+        if (context.pendingVerseCue) {
+            console.log(`[STT] Recovered verse ${verse.start} after incomplete verse cue`)
+        }
 
         const detection = this.makeDetection(context.bookNumber, context.bookName, context.chapter, verse.start, verse.end, 0.9, cleaned, "contextual")
         this.setContext(detection, false)
@@ -263,27 +309,34 @@ export class BibleDetector {
     private extractVerseOnly(text: string, allowBare: boolean): { start: number; end?: number } | null {
         const lower = text.toLowerCase()
 
-        // Verse range: "verses 5 through 8" / "verse 5 to 8" / "v5-8"
-        const rangeMatch = lower.match(/\b(?:and\s+)?(?:v(?:erse)?s?)\.?\s*(\d{1,3}|[a-z]+(?:\s+[a-z]+)?)\s*(?:to|through|-|–|—)\s*(\d{1,3}|[a-z]+(?:\s+[a-z]+)?)\b/)
+        // Verse range: "verses 5 through 8" / "verse 5 to 8" / "versus 5 to 8" / "v5-8"
+        const rangeMatch = lower.match(new RegExp(`\\b(?:and\\s+)?${VERSE_CUE}\\.?\\s*(\\d{1,3}|[a-z]+(?:\\s+[a-z]+)?)\\s*(?:to|through|-|–|—)\\s*(\\d{1,3}|[a-z]+(?:\\s+[a-z]+)?)\\b`))
         if (rangeMatch) {
             const start = this.parseNumber(rangeMatch[1])
             const end = this.parseNumber(rangeMatch[2])
             if (start > 0 && end > start && end < 200) return { start, end }
         }
 
-        // Single verse: "verse 18" / "verse seventeen" / "v. 18"
-        const singleMatch = lower.match(/\b(?:and\s+)?(?:v(?:erse)?s?)\.?\s*(\d{1,3}|[a-z]+(?:\s+[a-z]+)?)(?:\s|$|[,.!?;:])/)
+        // Single verse: "verse 18" / "vs 4" / "v.4" / "versus 4" / "verse seventeen"
+        const singleMatch = lower.match(new RegExp(`\\b(?:and\\s+)?${VERSE_CUE}\\.?\\s*(\\d{1,3}|[a-z]+(?:\\s+[a-z]+)?)(?:\\s|$|[,.!?;:])`))
         if (singleMatch) {
             const start = this.parseNumber(singleMatch[1])
             if (start > 0 && start < 200) return { start }
         }
 
         // Bare number at the start ("16 for God so loved") — only right after a chapter-only mention
+        // or after a pending "verse" cue with no number yet
         if (allowBare) {
             const bareMatch = lower.match(/^(\d{1,3})(?:\s|$)/)
             if (bareMatch) {
                 const start = parseInt(bareMatch[1], 10)
                 if (start > 0 && start <= 176) return { start }
+            }
+            // Spoken bare number ("four", "twenty eight") as leading token
+            const spokenBare = lower.match(/^([a-z]+(?:\s+[a-z]+)?)(?:\s|$|[,.!?;:])/)
+            if (spokenBare) {
+                const start = this.parseNumber(spokenBare[1])
+                if (start > 0 && start <= MAX_VERSE) return { start }
             }
         }
 
@@ -435,7 +488,7 @@ export class BibleDetector {
         }
     }
 
-    private parseReference(text: string, match: BookMatch): { chapter: number; verseStart: number; verseEnd?: number } | null {
+    private parseReference(text: string, match: BookMatch): { chapter: number; verseStart: number; verseEnd?: number; pendingVerseCue?: boolean } | null {
         const afterBook = text
             .substring(match.end)
             .trim()
@@ -464,8 +517,12 @@ export class BibleDetector {
             }
         }
 
-        // Pattern 2: "chapter 3 verse 16", "chapter 3 v16", "3vs16"
-        const spokenPattern = /^(?:(?:chapter|chap|ch)\s+)?(\d{1,3}|[a-z ]+?)(?:\s*[,.;:]?\s+|\s*(?=v(?:erse)?s?\.?\s*\d))(?:(?:verse|verses|vs|v)\.?\s*)(\d{1,3}|[a-z ]+?)(?:\s*(?:through|to|-|–|—)\s*(\d{1,3}|[a-z ]+?))?(?:\s|$|[,.!?;:])/i
+        // Pattern 2: "chapter 3 verse 16", "3 vs 4", "3 versus 4", "3 v.4", "3vs16"
+        // VERSE_CUE lists "versus" before "verse" so ASR "versus" is not split into verse+"ersus".
+        const spokenPattern = new RegExp(
+            `^(?:(?:chapter|chap|ch)\\s+)?(\\d{1,3}|[a-z ]+?)(?:\\s*[,.;:]?\\s+|\\s*(?=${VERSE_CUE}\\.?\\s*(?:\\d|[a-z])))(?:${VERSE_CUE})\\.?\\s*(\\d{1,3}|[a-z ]+?)(?:\\s*(?:through|to|-|–|—)\\s*(\\d{1,3}|[a-z ]+?))?(?:\\s|$|[,.!?;:])`,
+            "i"
+        )
         const spokenMatch = afterBook.match(spokenPattern)
         if (spokenMatch) {
             const chapter = this.parseNumber(spokenMatch[1])
@@ -474,6 +531,18 @@ export class BibleDetector {
 
             if (chapter > 0 && verseStart > 0) {
                 return { chapter, verseStart, verseEnd: verseEnd && verseEnd > verseStart ? verseEnd : undefined }
+            }
+        }
+
+        // Pattern 2b: chapter + verse cue without number ("2 vs", "2 verse", "chapter 2 versus")
+        // Keep chapter warm and wait for a following bare "4" / "four".
+        const chapterVerseCueOnly = new RegExp(`^(?:(?:chapter|chap|ch)\\s+)?(\\d{1,3}|[a-z]+(?:\\s+[a-z]+)?)\\s+${VERSE_CUE}\\.?\\s*$`, "i")
+        const chapterVerseCueMatch = afterBook.match(chapterVerseCueOnly)
+        if (chapterVerseCueMatch) {
+            const chapter = this.parseNumber(chapterVerseCueMatch[1])
+            if (chapter > 0) {
+                console.log(`[STT] Verse number missing after chapter ${chapter} cue — waiting for number`)
+                return { chapter, verseStart: 0, pendingVerseCue: true }
             }
         }
 
@@ -584,16 +653,20 @@ export class BibleDetector {
         return null
     }
 
-    private checkNextVerseCommand(text: string): BibleDetection | null {
+    private checkNextVerseCommand(text: string, allowBareNext: boolean): BibleDetection | null {
         const lower = text.toLowerCase()
         const whole = lower.replace(/[.,!?;:]/g, "").trim()
         const front = this.recentDetections[0]
         if (!front) return null
 
-        // Bare single-word commands only count as the WHOLE utterance
-        // (utterances are VAD-segmented, so "next" mid-sentence never triggers)
-        const isNext = NEXT_VERSE_PHRASES.some((phrase) => lower.includes(phrase)) || whole === "next"
-        const isBack = whole === "back" || whole === "previous" || whole === "go back"
+        // Never steal "next chapter" — chapter commands are checked after this only when
+        // this returns null, so exclude any utterance that mentions chapter.
+        if (/\bchapter\b/.test(whole)) return null
+
+        // Bare single-word commands only count as the WHOLE utterance on finals
+        // (partials often start with "next" before "chapter"/"verse" arrives)
+        const isNext = NEXT_VERSE_PHRASES.some((phrase) => lower.includes(phrase)) || (allowBareNext && whole === "next")
+        const isBack = allowBareNext && (whole === "back" || whole === "previous" || whole === "go back")
 
         if (isNext) {
             const nextVerse = (front.verseEnd || front.verseStart) + 1
@@ -671,7 +744,7 @@ export class BibleDetector {
         }
     }
 
-    private setContext(detection: BibleDetection, allowBareVerse: boolean): void {
+    private setContext(detection: BibleDetection, allowBareVerse: boolean, pendingVerseCue = false): void {
         this.context = {
             bookNumber: detection.bookNumber,
             bookName: detection.bookName,
@@ -679,6 +752,7 @@ export class BibleDetector {
             verseStart: detection.verseStart,
             verseEnd: detection.verseEnd,
             allowBareVerse,
+            pendingVerseCue,
             setAt: Date.now()
         }
     }
@@ -686,6 +760,74 @@ export class BibleDetector {
     private isContextLive(): boolean {
         if (!this.context) return false
         return Date.now() - this.context.setAt <= CONTEXT_TIMEOUT_MS
+    }
+
+    private isPendingBookLive(): boolean {
+        if (!this.pendingBook) return false
+        return Date.now() - this.pendingBook.setAt <= CONTEXT_TIMEOUT_MS
+    }
+
+    /**
+     * Whole-utterance verse cue with no number ("verse", "vs", "versus").
+     * Refreshes warm context so a following "4" / "four" completes the reference.
+     */
+    private notePendingVerseCue(cleaned: string): boolean {
+        const whole = cleaned
+            .toLowerCase()
+            .replace(/[.,!?;:]/g, "")
+            .trim()
+        if (!new RegExp(`^(?:the\\s+)?${VERSE_CUE}\\.?$`).test(whole)) return false
+        if (!this.isContextLive()) return false
+
+        this.context!.pendingVerseCue = true
+        this.context!.allowBareVerse = true
+        this.context!.setAt = Date.now()
+        console.log(`[STT] Verse cue without number ("${whole}") — waiting for verse number`)
+        return true
+    }
+
+    /** Remember a book spoken alone so a later "3:16" / "chapter 2 verse 4" can complete it. */
+    private maybeSetPendingBook(cleaned: string, match: BookMatch): void {
+        if (match.fuzzy && (match.requireVerse ?? true)) return
+        const rest = (cleaned.slice(0, match.start) + " " + cleaned.slice(match.end))
+            .replace(/[.,!?;:]/g, " ")
+            .replace(/\s+/g, " ")
+            .trim()
+            .toLowerCase()
+        // Allow only light filler around the book name
+        if (rest && !/^(?:uh+|um+|the|a|an|book|of|and|to|in|please|okay|ok)(?:\s+(?:uh+|um+|the|a|an|book|of|and|to|in|please|okay|ok))*$/.test(rest)) {
+            return
+        }
+        this.pendingBook = { book: match.book, setAt: Date.now() }
+        console.log(`[STT] Book-only pending: ${match.book.name}`)
+    }
+
+    /** Complete a previously pending book with a chapter/verse-only follow-up utterance. */
+    private detectFromPendingBook(cleaned: string): BibleDetection[] {
+        if (!this.isPendingBookLive()) return []
+        const book = this.pendingBook!.book
+        // Avoid re-matching if this utterance already contains a different book name
+        if (this.findBooks(cleaned).some((m) => m.book.number !== book.number)) return []
+
+        const synthetic = `${book.name} ${cleaned}`
+        const match: BookMatch = { book, start: 0, end: book.name.length }
+        const ref = this.parseReference(synthetic, match)
+        if (!ref) return []
+        if (ref.chapter > 0 && ref.chapter > book.maxChapters) return []
+
+        this.pendingBook = null
+
+        if (ref.verseStart === 0) {
+            const detection = this.makeDetection(book.number, book.name, ref.chapter, 1, undefined, 0.86, cleaned, "contextual")
+            this.setContext(detection, true, ref.pendingVerseCue)
+            this.pushRecent(detection)
+            return [detection]
+        }
+
+        const detection = this.makeDetection(book.number, book.name, ref.chapter, ref.verseStart, ref.verseEnd, this.computeConfidence(ref), cleaned, "direct")
+        this.setContext(detection, false)
+        this.pushRecent(detection)
+        return [detection]
     }
 
     private pushRecent(detection: BibleDetection): void {
@@ -701,10 +843,10 @@ export class BibleDetector {
 /**
  * Extract a spoken Bible translation name when the utterance is an explicit
  * switch command. Conservative: requires a cue word (translation / version /
- * switch to / change to / use) plus a known alias — bare "NIV" mid-sermon
- * never matches.
+ * switch to / change to / use) plus a known alias, OR a whole-utterance short
+ * acronym ("NIV", "KJV") — bare "NIV" mid-sermon never matches.
  *
- * Examples: "NIV translation", "switch to KJV", "KJV version", "use the ESV".
+ * Examples: "NIV translation", "switch to KJV", "KJV version", "use the ESV", "NIV".
  * Returns the matched alias (lowercased) or null.
  */
 export function extractTranslationCommand(text: string): string | null {
@@ -748,6 +890,14 @@ export function extractTranslationCommand(text: string): string | null {
     if (trailingCue) {
         const alias = findAliasIn(trailingCue[1].trim())
         if (alias) return alias
+    }
+
+    // Whole-utterance short acronym only ("NIV", "ESV") — VAD-segmented intentional switch.
+    // Multi-word aliases still require a cue word to avoid false positives.
+    if (!/\s/.test(normalized) && normalized.length <= 5) {
+        for (const alias of TRANSLATION_ALIASES) {
+            if (alias === normalized) return alias
+        }
     }
 
     return null

@@ -27,9 +27,33 @@ export function getAvailableBibleVersions(): { id: string; name: string }[] {
 }
 
 /**
+ * Acronym → full spoken names. Used so "niv" resolves against an installed
+ * scripture named "New International Version" (no "NIV" token in the title).
+ */
+const BIBLE_ALIAS_EXPANSIONS: Record<string, string[]> = {
+    niv: ["new international version", "new international"],
+    kjv: ["king james version", "king james"],
+    esv: ["english standard version", "english standard"],
+    nkjv: ["new king james version", "new king james"],
+    nlt: ["new living translation", "new living"],
+    nasb: ["new american standard", "new american standard bible", "new american standard version"],
+    csb: ["christian standard bible"],
+    asv: ["american standard version", "american standard"],
+    web: ["world english bible", "world english"],
+    rsv: ["revised standard version", "revised standard"],
+    amp: ["amplified", "amplified bible"],
+    msg: ["the message", "message"],
+    ceb: ["common english bible"],
+    net: ["net bible", "new english translation"],
+    bsb: ["berean standard bible", "berean study bible"],
+    lsb: ["legacy standard bible"]
+}
+
+/**
  * Match a spoken translation alias (from extractTranslationCommand) against
  * installed FreeShow scriptures. Prefers whole-token / abbreviation hits;
- * skips collections. Returns null when nothing available matches.
+ * expands acronyms (NIV → New International Version); skips collections.
+ * Returns null when nothing available matches.
  */
 export function resolveSpokenBibleVersion(spokenAlias: string, versions?: { id: string; name: string }[]): { id: string; name: string } | null {
     const alias = spokenAlias.toLowerCase().trim()
@@ -39,29 +63,46 @@ export function resolveSpokenBibleVersion(spokenAlias: string, versions?: { id: 
     if (!list.length) return null
 
     const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-    const tokenRe = new RegExp(`(?:^|[^a-z0-9])${escape(alias)}(?:[^a-z0-9]|$)`, "i")
+    const tokenRe = (token: string) => new RegExp(`(?:^|[^a-z0-9])${escape(token)}(?:[^a-z0-9]|$)`, "i")
 
-    // 1) Exact name (case-insensitive)
-    const exact = list.find((v) => v.name.toLowerCase().trim() === alias)
-    if (exact) return exact
-
-    // 2) Name contains the alias as a whole token (e.g. "KJV" in "King James (KJV)")
-    const tokenHits = list.filter((v) => tokenRe.test(v.name.toLowerCase()))
-    if (tokenHits.length === 1) return tokenHits[0]
-    if (tokenHits.length > 1) {
-        // Prefer shorter / closer names when several contain the token
-        return tokenHits.sort((a, b) => a.name.length - b.name.length)[0]
+    const pickFromHits = (hits: { id: string; name: string }[]) => {
+        if (hits.length === 1) return hits[0]
+        if (hits.length > 1) return hits.sort((a, b) => a.name.length - b.name.length)[0]
+        return null
     }
 
-    // 3) Alias expands to words present in the name ("king james" → "King James Version")
-    if (alias.includes(" ")) {
-        const words = alias.split(/\s+/).filter((w) => w !== "the" && w !== "version" && w !== "bible" && w !== "translation")
-        const wordHits = list.filter((v) => {
-            const n = v.name.toLowerCase()
-            return words.every((w) => new RegExp(`(?:^|[^a-z0-9])${escape(w)}(?:[^a-z0-9]|$)`, "i").test(n))
-        })
-        if (wordHits.length === 1) return wordHits[0]
-        if (wordHits.length > 1) return wordHits.sort((a, b) => a.name.length - b.name.length)[0]
+    const matchAlias = (candidate: string): { id: string; name: string } | null => {
+        // 1) Exact name (case-insensitive)
+        const exact = list.find((v) => v.name.toLowerCase().trim() === candidate)
+        if (exact) return exact
+
+        // 2) Name contains the alias as a whole token (e.g. "KJV" in "King James (KJV)")
+        const tokenHits = list.filter((v) => tokenRe(candidate).test(v.name.toLowerCase()))
+        const tokenPick = pickFromHits(tokenHits)
+        if (tokenPick) return tokenPick
+
+        // 3) Alias expands to words present in the name ("king james" → "King James Version")
+        if (candidate.includes(" ")) {
+            const words = candidate.split(/\s+/).filter((w) => w !== "the" && w !== "version" && w !== "bible" && w !== "translation")
+            if (words.length) {
+                const wordHits = list.filter((v) => {
+                    const n = v.name.toLowerCase()
+                    return words.every((w) => tokenRe(w).test(n))
+                })
+                return pickFromHits(wordHits)
+            }
+        }
+
+        return null
+    }
+
+    const direct = matchAlias(alias)
+    if (direct) return direct
+
+    // 4) Acronym expansion: "niv" → "New International Version" display names
+    for (const expansion of BIBLE_ALIAS_EXPANSIONS[alias] || []) {
+        const hit = matchAlias(expansion)
+        if (hit) return hit
     }
 
     return null

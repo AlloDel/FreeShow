@@ -5,6 +5,7 @@ describe("resolveSpokenBibleVersion", () => {
     const versions = [
         { id: "kjv-id", name: "King James Version (KJV)" },
         { id: "niv-id", name: "NIV" },
+        { id: "niv-full-id", name: "New International Version" },
         { id: "esv-id", name: "English Standard Version" },
         { id: "nkjv-id", name: "New King James Version" },
         { id: "coll-id", name: "KJV + NIV (collection)" }
@@ -15,7 +16,21 @@ describe("resolveSpokenBibleVersion", () => {
     })
 
     it("matches exact short names", () => {
-        expect(resolveSpokenBibleVersion("niv", versions)).toEqual({ id: "niv-id", name: "NIV" })
+        expect(resolveSpokenBibleVersion("niv", [{ id: "niv-id", name: "NIV" }, { id: "coll-id", name: "KJV + NIV (collection)" }])).toEqual({
+            id: "niv-id",
+            name: "NIV"
+        })
+    })
+
+    it("expands NIV acronym to New International Version display name", () => {
+        expect(resolveSpokenBibleVersion("niv", [{ id: "niv-full-id", name: "New International Version" }])).toEqual({
+            id: "niv-full-id",
+            name: "New International Version"
+        })
+    })
+
+    it("expands ESV acronym to English Standard Version", () => {
+        expect(resolveSpokenBibleVersion("esv", versions)).toEqual({ id: "esv-id", name: "English Standard Version" })
     })
 
     it("matches multi-word aliases against name tokens", () => {

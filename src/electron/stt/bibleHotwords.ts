@@ -107,6 +107,8 @@ const BIBLE_HOTWORDS: string[] = [
     "chapter",
     "verse",
     "verses",
+    "versus",
+    "vs",
     "Bible",
     "scripture",
     "next verse",

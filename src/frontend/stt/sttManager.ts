@@ -383,7 +383,8 @@ function processPartialDetections(transcript: string): void {
     // Translation switches are intentional whole-utterance commands — only finalize on finals
     // so a growing partial ("switch to…") does not flip versions early.
 
-    const referenceHits = bibleDetector.processTranscript(transcript)
+    // Partials: do not treat bare "next"/"back" as verse commands (avoids stealing "next chapter")
+    const referenceHits = bibleDetector.processTranscript(transcript, { isFinal: false })
     referenceHits.forEach((detection) => scheduleDetection(detection))
 
     // Ensemble: reference path wins when both could fire for this window.
@@ -486,7 +487,7 @@ function handleTranscript(event: TranscriptEvent): void {
                     flushPendingDetections(true)
                 } else {
                     flushPendingDetections(false)
-                    const referenceHits = bibleDetector.processTranscript(event.transcript).filter((d) => !utteranceCommittedKeys.has(detectionKey(d)))
+                    const referenceHits = bibleDetector.processTranscript(event.transcript, { isFinal: true }).filter((d) => !utteranceCommittedKeys.has(detectionKey(d)))
                     if (referenceHits.length) {
                         referenceHits.forEach((d) => handleDetection(d))
                     } else {
@@ -494,6 +495,13 @@ function handleTranscript(event: TranscriptEvent): void {
                         if (quoteHit && !utteranceCommittedKeys.has(detectionKey(quoteHit))) handleDetection(quoteHit)
                     }
                 }
+                endUtterance()
+            } else {
+                // Empty final (short token dropped by ASR) — still close the utterance so
+                // pending partial detections can commit and the next listen isn't stuck.
+                sttPartialTranscript.set("")
+                sttDebug("final (empty) — flushing pending")
+                flushPendingDetections(true)
                 endUtterance()
             }
             break
@@ -556,8 +564,10 @@ function handleDetection(detection: BibleDetection): void {
 function hasExplicitVerseInSnippet(transcript: string): boolean {
     const text = transcript.toLowerCase()
     if (/\b\d{1,3}\s*[:\-]\s*\d{1,3}\b/.test(text)) return true
-    if (/\b(?:verse|verses|vs|v)\.?\s*\d{1,3}\b/.test(text)) return true
-    return /\b\d{1,3}\s*v(?:erse)?s?\.?\s*\d{1,3}\b/.test(text)
+    // versus|verses|verse|vs|v — longest-first so "versus 4" counts
+    if (/\b(?:versus|verses|verse|vs|v)\.?\s*\d{1,3}\b/.test(text)) return true
+    if (/\b(?:versus|verses|verse|vs|v)\.?\s+(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)\b/.test(text)) return true
+    return /\b\d{1,3}\s*(?:versus|verses|verse|vs|v)\.?\s*\d{1,3}\b/.test(text)
 }
 
 /** Next/back/previous verse or chapter and lone-number jumps are intentional — allow auto-show. */
@@ -567,12 +577,12 @@ function isVerseJumpOrCommand(transcript: string): boolean {
         .replace(/[.,!?;:]/g, "")
         .trim()
     if (!t) return false
-    if (t === "next" || t === "back" || t === "previous" || t === "go back") return true
+    if (t === "next" || t === "back" || t === "previous" || t === "go back" || t === "next one") return true
     if (/\b(?:next|previous|following|last)\s+verse\b/.test(t)) return true
     if (/\b(?:next|previous|following|last)\s+chapter\b/.test(t)) return true
     if (/\b(?:chapter after that|chapter before that|go back a chapter|back a chapter)\b/.test(t)) return true
     if (/\b(?:that verse again|same verse|repeat that verse|go back to that verse|back to that verse|verse after that)\b/.test(t)) return true
-    // Lone number utterance ("14", "twenty eight") while context is warm
+    // Lone number utterance ("14", "twenty eight", "four") while context is warm
     if (/^\d{1,3}$/.test(t)) return true
     if (/^(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:\s+(?:one|two|three|four|five|six|seven|eight|nine))?$/.test(t)) return true
     if (/^(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen)$/.test(t)) return true

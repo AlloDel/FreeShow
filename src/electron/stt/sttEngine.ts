@@ -28,22 +28,24 @@ const PREROLL_MAX_SAMPLES = 6400
 /** Silence padding fed before finalizing so the decoder flushes trailing tokens (~0.35 s). */
 const FINALIZE_PAD_SAMPLES = 5600
 /** VAD closes an utterance after this much trailing silence (seconds). */
-const VAD_MIN_SILENCE = 0.4
+const VAD_MIN_SILENCE = 0.35
 /** Force-close long utterances so finals keep flowing during continuous speech (seconds). */
 const VAD_MAX_SPEECH = 12
 /**
- * Silero speech probability threshold. Raised above the default 0.5 so room
- * noise / crowd murmur is less likely to open an utterance and burn CPU.
+ * Silero speech probability threshold. Slightly above the default 0.5 so room
+ * noise / crowd murmur is less likely to open an utterance, but low enough that
+ * short tokens ("four", "next", "NIV") still open after a pause.
  */
-const VAD_THRESHOLD = 0.55
-/** Minimum speech duration before VAD opens (seconds). */
-const VAD_MIN_SPEECH = 0.2
+const VAD_THRESHOLD = 0.5
+/** Minimum speech duration before VAD opens (seconds). Short so "4" / "next" count. */
+const VAD_MIN_SPEECH = 0.12
 /**
  * Cheap RMS gate applied only while idle (no live stream). Chunks quieter than
  * this skip Silero acceptWaveform entirely — saves CPU during silence without
  * dropping audio once speech is underway (VAD still needs trailing silence).
+ * Kept low so quiet short verse numbers after a pause are not skipped.
  */
-const IDLE_RMS_GATE = 0.006
+const IDLE_RMS_GATE = 0.004
 
 export class SttEngine extends EventEmitter {
     isRunning = false
@@ -199,7 +201,9 @@ export class SttEngine extends EventEmitter {
         while (this.recognizer.isReady(this.liveStream)) this.recognizer.decode(this.liveStream)
 
         const text: string = (this.recognizer.getResult(this.liveStream).text || "").trim()
-        if (text) this.emitTranscript({ type: "final", transcript: text })
+        // Always emit a final so the frontend can flush pending partial detections and
+        // reset utterance state — empty finals happen on very short / quiet tokens.
+        this.emitTranscript({ type: "final", transcript: text })
 
         this.liveStream = null
         this.lastPartial = ""

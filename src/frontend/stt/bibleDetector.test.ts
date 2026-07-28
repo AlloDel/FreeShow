@@ -458,6 +458,44 @@ describe("BibleDetector", () => {
             expect(d).toMatchObject({ bookName: "John", chapter: 4, verseStart: 7 })
         })
 
+        it("advances next verse immediately after next chapter", () => {
+            detector.processTranscript("John 3:16")
+            const [ch] = detector.processTranscript("next chapter")
+            expect(ch).toMatchObject({ bookName: "John", chapter: 4, verseStart: 1 })
+            const [v] = detector.processTranscript("next verse")
+            expect(v).toMatchObject({ bookName: "John", chapter: 4, verseStart: 2 })
+        })
+
+        it("advances next verse after adoptExternalDetection then next chapter", () => {
+            detector.adoptExternalDetection({
+                id: "ext",
+                bookNumber: 43,
+                bookName: "John",
+                chapter: 3,
+                verseStart: 16,
+                confidence: 0.9,
+                source: "quotation",
+                transcriptSnippet: "for God so loved",
+                detectedAt: Date.now()
+            })
+            detector.processTranscript("next chapter")
+            const [d] = detector.processTranscript("next verse")
+            expect(d).toMatchObject({ bookName: "John", chapter: 4, verseStart: 2 })
+        })
+
+        it("does not treat partial bare 'next' as next verse (avoids stealing next chapter)", () => {
+            detector.processTranscript("John 3:16")
+            expect(detector.processTranscript("next", { isFinal: false })).toEqual([])
+            const [d] = detector.processTranscript("next chapter", { isFinal: true })
+            expect(d).toMatchObject({ bookName: "John", chapter: 4, verseStart: 1 })
+        })
+
+        it("still treats bare 'next' as next verse on finals", () => {
+            detector.processTranscript("John 3:16")
+            const [d] = detector.processTranscript("next", { isFinal: true })
+            expect(d).toMatchObject({ bookName: "John", chapter: 3, verseStart: 17 })
+        })
+
         it("does not treat 'next chapter' as 'next verse'", () => {
             detector.processTranscript("John 3:16")
             const [d] = detector.processTranscript("next chapter")
@@ -466,9 +504,60 @@ describe("BibleDetector", () => {
         })
     })
 
+    describe("vs / versus / incomplete verse ASR", () => {
+        it("parses 'Zephaniah 2 vs 4'", () => {
+            const [d] = detector.processTranscript("Zephaniah 2 vs 4")
+            expect(d).toMatchObject({ bookName: "Zephaniah", chapter: 2, verseStart: 4, source: "direct" })
+        })
+
+        it("parses 'Zephaniah 2 versus 4' (ASR expansion of vs)", () => {
+            const [d] = detector.processTranscript("Zephaniah 2 versus 4")
+            expect(d).toMatchObject({ bookName: "Zephaniah", chapter: 2, verseStart: 4 })
+        })
+
+        it("parses 'Zephaniah 2:4' and 'v.4'", () => {
+            const [colon] = detector.processTranscript("Zephaniah 2:4")
+            expect(colon).toMatchObject({ bookName: "Zephaniah", chapter: 2, verseStart: 4 })
+            detector.reset()
+            const [vdot] = detector.processTranscript("Zephaniah 2 v.4")
+            expect(vdot).toMatchObject({ bookName: "Zephaniah", chapter: 2, verseStart: 4 })
+        })
+
+        it("completes verse after 'verse' with no number then bare '4'", () => {
+            detector.processTranscript("John 3:16")
+            expect(detector.processTranscript("verse")).toEqual([])
+            const [d] = detector.processTranscript("4")
+            expect(d).toMatchObject({ bookName: "John", chapter: 3, verseStart: 4 })
+        })
+
+        it("completes verse after 'Zephaniah 2 vs' then bare '4'", () => {
+            const [ch] = detector.processTranscript("Zephaniah 2 vs")
+            expect(ch).toMatchObject({ bookName: "Zephaniah", chapter: 2, verseStart: 1, source: "contextual" })
+            const [d] = detector.processTranscript("4")
+            expect(d).toMatchObject({ bookName: "Zephaniah", chapter: 2, verseStart: 4 })
+        })
+
+        it("completes with spoken 'four' after a verse cue", () => {
+            detector.processTranscript("Romans 8:1")
+            expect(detector.processTranscript("versus")).toEqual([])
+            const [d] = detector.processTranscript("four")
+            expect(d).toMatchObject({ bookName: "Romans", chapter: 8, verseStart: 4 })
+        })
+
+        it("keeps book-only pending then completes with chapter:verse", () => {
+            expect(detector.processTranscript("Zephaniah")).toEqual([])
+            const [d] = detector.processTranscript("2:4")
+            expect(d).toMatchObject({ bookName: "Zephaniah", chapter: 2, verseStart: 4 })
+        })
+    })
+
     describe("spoken translation switch (extractTranslationCommand)", () => {
         it("matches 'NIV translation'", () => {
             expect(extractTranslationCommand("NIV translation")).toBe("niv")
+        })
+
+        it("matches 'switch to NIV'", () => {
+            expect(extractTranslationCommand("switch to NIV")).toBe("niv")
         })
 
         it("matches 'switch to KJV'", () => {
@@ -495,9 +584,14 @@ describe("BibleDetector", () => {
             expect(extractTranslationCommand("switch to NIV please")).toBe("niv")
         })
 
+        it("matches whole-utterance acronyms", () => {
+            expect(extractTranslationCommand("NIV")).toBe("niv")
+            expect(extractTranslationCommand("ESV")).toBe("esv")
+            expect(extractTranslationCommand("KJV")).toBe("kjv")
+        })
+
         it("ignores bare abbreviation mid-sermon", () => {
             expect(extractTranslationCommand("the NIV says for God so loved")).toBeNull()
-            expect(extractTranslationCommand("NIV")).toBeNull()
             expect(extractTranslationCommand("we read from KJV this morning")).toBeNull()
         })
 
