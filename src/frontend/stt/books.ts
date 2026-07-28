@@ -166,7 +166,7 @@ export const BIBLE_REFERENCE_FEEDWORDS =
     "First Timothy, Second Timothy, Titus, Philemon, " +
     "Hebrews, James, First Peter, Second Peter, " +
     "First John, Second John, Third John, Jude, Revelation, " +
-    "chapter, verse, verses, Bible, scripture, next verse, previous verse."
+    "chapter, verse, verses, Bible, scripture, next verse, previous verse, next chapter, previous chapter."
 
 /**
  * Build a lookup map from lowercased name/abbreviation/variant → BookEntry.

@@ -109,7 +109,9 @@ const BIBLE_HOTWORDS: string[] = [
     "Bible",
     "scripture",
     "next verse",
-    "previous verse"
+    "previous verse",
+    "next chapter",
+    "previous chapter"
 ]
 
 /** Moderate bias — enough to prefer book names, low enough to avoid inventing them. */

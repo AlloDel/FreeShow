@@ -7,7 +7,7 @@ import type { Bible } from "../../types/Bible"
 import type { BibleDetection } from "../../types/Stt"
 import { BIBLE_BOOKS } from "./books"
 import { activeScripture, drawerTabsData, scriptures, scripturesCache } from "../stores"
-import { sttError } from "./sttStore"
+import { sttError, sttSettings } from "./sttStore"
 
 /**
  * Get all available Bible versions from FreeShow's scriptures store.
@@ -24,6 +24,66 @@ export function getAvailableBibleVersions(): { id: string; name: string }[] {
         })
         .sort((a, b) => Number(b.isCollection) - Number(a.isCollection))
         .map(({ id, name }) => ({ id, name }))
+}
+
+/**
+ * Match a spoken translation alias (from extractTranslationCommand) against
+ * installed FreeShow scriptures. Prefers whole-token / abbreviation hits;
+ * skips collections. Returns null when nothing available matches.
+ */
+export function resolveSpokenBibleVersion(spokenAlias: string, versions?: { id: string; name: string }[]): { id: string; name: string } | null {
+    const alias = spokenAlias.toLowerCase().trim()
+    if (!alias) return null
+
+    const list = (versions || getAvailableBibleVersions()).filter((v) => !/\(collection\)$/i.test(v.name))
+    if (!list.length) return null
+
+    const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    const tokenRe = new RegExp(`(?:^|[^a-z0-9])${escape(alias)}(?:[^a-z0-9]|$)`, "i")
+
+    // 1) Exact name (case-insensitive)
+    const exact = list.find((v) => v.name.toLowerCase().trim() === alias)
+    if (exact) return exact
+
+    // 2) Name contains the alias as a whole token (e.g. "KJV" in "King James (KJV)")
+    const tokenHits = list.filter((v) => tokenRe.test(v.name.toLowerCase()))
+    if (tokenHits.length === 1) return tokenHits[0]
+    if (tokenHits.length > 1) {
+        // Prefer shorter / closer names when several contain the token
+        return tokenHits.sort((a, b) => a.name.length - b.name.length)[0]
+    }
+
+    // 3) Alias expands to words present in the name ("king james" → "King James Version")
+    if (alias.includes(" ")) {
+        const words = alias.split(/\s+/).filter((w) => w !== "the" && w !== "version" && w !== "bible" && w !== "translation")
+        const wordHits = list.filter((v) => {
+            const n = v.name.toLowerCase()
+            return words.every((w) => new RegExp(`(?:^|[^a-z0-9])${escape(w)}(?:[^a-z0-9]|$)`, "i").test(n))
+        })
+        if (wordHits.length === 1) return wordHits[0]
+        if (wordHits.length > 1) return wordHits.sort((a, b) => a.name.length - b.name.length)[0]
+    }
+
+    return null
+}
+
+/**
+ * Apply a spoken translation switch: set STT + drawer scripture to the matched version.
+ * Returns the resolved version, or null if unavailable in the scriptures store.
+ */
+export function applySpokenBibleVersion(spokenAlias: string): { id: string; name: string } | null {
+    const resolved = resolveSpokenBibleVersion(spokenAlias)
+    if (!resolved) return null
+
+    sttSettings.update((s) => ({ ...s, bibleVersionId: resolved.id }))
+
+    drawerTabsData.update((a) => {
+        if (!a.scripture) a.scripture = { enabled: true, activeSubTab: null }
+        a.scripture.activeSubTab = resolved.id
+        return a
+    })
+
+    return resolved
 }
 
 /**

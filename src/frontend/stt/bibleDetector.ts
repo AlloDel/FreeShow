@@ -46,6 +46,49 @@ const PREVIOUS_VERSE_PHRASES = ["previous verse", "last verse", "that verse agai
 /** Phrases indicating the speaker wants to advance to the next verse. */
 const NEXT_VERSE_PHRASES = ["next verse", "following verse", "verse after that"]
 
+/** Phrases indicating the speaker wants to advance to the next chapter (verse 1). */
+const NEXT_CHAPTER_PHRASES = ["next chapter", "following chapter", "chapter after that"]
+
+/** Phrases indicating the speaker wants to go back a chapter (verse 1). */
+const PREVIOUS_CHAPTER_PHRASES = ["previous chapter", "last chapter", "chapter before that", "go back a chapter", "back a chapter"]
+
+/**
+ * Known Bible translation aliases (longest first). Used only with explicit cue words
+ * ("NIV translation", "switch to KJV") — never bare mid-sentence abbreviations.
+ */
+const TRANSLATION_ALIASES = [
+    "new international version",
+    "new king james version",
+    "english standard version",
+    "new living translation",
+    "new american standard",
+    "christian standard bible",
+    "american standard version",
+    "world english bible",
+    "king james version",
+    "new king james",
+    "king james",
+    "the message",
+    "amplified",
+    "message",
+    "nkjv",
+    "nasb",
+    "niv",
+    "esv",
+    "nlt",
+    "csb",
+    "asv",
+    "web",
+    "kjv",
+    "rsv",
+    "amp",
+    "msg",
+    "ceb",
+    "net",
+    "bsb",
+    "lsb"
+].sort((a, b) => b.length - a.length)
+
 /** Highest verse number in the Bible (Psalm 119:176). */
 const MAX_VERSE = 176
 
@@ -86,8 +129,8 @@ export class BibleDetector {
     /**
      * Process a final transcript and return any Bible references found.
      * Handles direct references, chapter-only mentions (synthesizes verse 1),
-     * verse-only continuations against the active context, and the
-     * "previous verse" voice command.
+     * verse-only continuations against the active context, and voice commands
+     * (next/previous verse, next/previous chapter).
      */
     processTranscript(text: string): BibleDetection[] {
         if (!text) return []
@@ -108,11 +151,34 @@ export class BibleDetector {
             return [previous]
         }
 
+        const nextChapter = this.checkNextChapterCommand(cleaned)
+        if (nextChapter) {
+            this.setContext(nextChapter, true)
+            this.pushRecent(nextChapter)
+            return [nextChapter]
+        }
+
+        const previousChapter = this.checkPreviousChapterCommand(cleaned)
+        if (previousChapter) {
+            this.setContext(previousChapter, true)
+            this.pushRecent(previousChapter)
+            return [previousChapter]
+        }
+
         const direct = this.detectDirect(cleaned)
         if (direct.length) return direct
 
         const contextual = this.detectContextual(cleaned)
         return contextual ? [contextual] : []
+    }
+
+    /**
+     * Most recent detection (for re-projecting after a translation switch).
+     * Returns a copy so callers cannot mutate internal history.
+     */
+    getLatestDetection(): BibleDetection | null {
+        const front = this.recentDetections[0]
+        return front ? { ...front } : null
     }
 
     /** Reset internal state (call when STT is stopped or errors). */
@@ -554,6 +620,34 @@ export class BibleDetector {
         return null
     }
 
+    private checkNextChapterCommand(text: string): BibleDetection | null {
+        const lower = text.toLowerCase()
+        if (!NEXT_CHAPTER_PHRASES.some((phrase) => lower.includes(phrase))) return null
+
+        const front = this.recentDetections[0]
+        if (!front) return null
+
+        const book = BIBLE_BOOKS.find((b) => b.number === front.bookNumber)
+        const maxChapters = book?.maxChapters ?? 150
+        const nextChapter = front.chapter + 1
+        if (nextChapter > maxChapters) return null
+
+        return this.makeDetection(front.bookNumber, front.bookName, nextChapter, 1, undefined, 0.95, text, "contextual")
+    }
+
+    private checkPreviousChapterCommand(text: string): BibleDetection | null {
+        const lower = text.toLowerCase()
+        if (!PREVIOUS_CHAPTER_PHRASES.some((phrase) => lower.includes(phrase))) return null
+
+        const front = this.recentDetections[0]
+        if (!front) return null
+
+        const previousChapter = front.chapter - 1
+        if (previousChapter < 1) return null
+
+        return this.makeDetection(front.bookNumber, front.bookName, previousChapter, 1, undefined, 0.95, text, "contextual")
+    }
+
     private computeConfidence(ref: { chapter: number; verseStart: number; verseEnd?: number }): number {
         let confidence = 0.9
         if (ref.chapter > 0) confidence += 0.04
@@ -602,6 +696,61 @@ export class BibleDetector {
         this.recentDetections.unshift(detection)
         if (this.recentDetections.length > 5) this.recentDetections.pop()
     }
+}
+
+/**
+ * Extract a spoken Bible translation name when the utterance is an explicit
+ * switch command. Conservative: requires a cue word (translation / version /
+ * switch to / change to / use) plus a known alias — bare "NIV" mid-sermon
+ * never matches.
+ *
+ * Examples: "NIV translation", "switch to KJV", "KJV version", "use the ESV".
+ * Returns the matched alias (lowercased) or null.
+ */
+export function extractTranslationCommand(text: string): string | null {
+    if (!text) return null
+    const lower = text
+        .toLowerCase()
+        .replace(/[.,!?;:]/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+    if (!lower) return null
+
+    // Strip trailing politeness so anchors still match
+    const normalized = lower.replace(/\s+please$/, "").trim()
+
+    const findAliasIn = (segment: string): string | null => {
+        const s = segment.replace(/^(?:the|a|an)\s+/, "").trim()
+        if (!s) return null
+        // Aliases are longest-first so "new king james version" wins over "king james"
+        for (const alias of TRANSLATION_ALIASES) {
+            if (s === alias || s.startsWith(alias + " ")) return alias
+        }
+        return null
+    }
+
+    // "switch to KJV" / "change to the NIV" / "use the ESV" / "use NIV translation"
+    const switchMatch = normalized.match(/^(?:switch\s+to|change\s+to|use)\s+(?:the\s+)?(.+)$/)
+    if (switchMatch) {
+        const rest = switchMatch[1].trim()
+        // Prefer the full phrase first ("New International Version") before stripping the cue word
+        const full = findAliasIn(rest)
+        if (full) return full
+        const stripped = rest.replace(/\s+(?:translation|version|bible)$/, "").trim()
+        if (stripped !== rest) {
+            const alias = findAliasIn(stripped)
+            if (alias) return alias
+        }
+    }
+
+    // "NIV translation" / "King James version" / "the ESV translation"
+    const trailingCue = normalized.match(/^(?:the\s+)?(.+?)\s+(?:translation|version)$/)
+    if (trailingCue) {
+        const alias = findAliasIn(trailingCue[1].trim())
+        if (alias) return alias
+    }
+
+    return null
 }
 
 /** Levenshtein distance with early exit once `maxDist` is exceeded. */

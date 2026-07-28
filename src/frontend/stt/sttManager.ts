@@ -5,7 +5,7 @@ import { get } from "svelte/store"
 import type { BibleDetection, SttStatus, TranscriptEvent, ModelInfo } from "../../types/Stt"
 import { sttBibleVersions, sttDetections, sttEnabled, sttError, sttModels, sttPartialTranscript, sttSettings, sttStatus, sttTranscript } from "./sttStore"
 import { installSttSettingsAutoBackup, restoreSttSettings } from "./sttSettingsBackup"
-import { BibleDetector } from "./bibleDetector"
+import { BibleDetector, extractTranslationCommand } from "./bibleDetector"
 import { QuoteMatcher } from "./quoteMatcher"
 
 const STT_CHANNEL = "STT"
@@ -367,6 +367,9 @@ function processPartialDetections(transcript: string): void {
     if (transcript === lastDetectorInput) return
     lastDetectorInput = transcript
 
+    // Translation switches are intentional whole-utterance commands — only finalize on finals
+    // so a growing partial ("switch to…") does not flip versions early.
+
     const referenceHits = bibleDetector.processTranscript(transcript)
     referenceHits.forEach((detection) => scheduleDetection(detection))
 
@@ -450,6 +453,13 @@ function handleTranscript(event: TranscriptEvent): void {
                 sttTranscript.set(event.transcript)
                 sttPartialTranscript.set("")
 
+                // Spoken translation switch (finals only — see processPartialDetections)
+                if (tryTranslationSwitch(event.transcript)) {
+                    flushPendingDetections(false)
+                    endUtterance()
+                    break
+                }
+
                 if (normalizeForCompare(event.transcript) === normalizeForCompare(lastDetectorInput)) {
                     // already analyzed as the last partial (finals may only differ by
                     // trailing punctuation from the flush) — commit what's pending
@@ -518,7 +528,7 @@ function hasExplicitVerseInSnippet(transcript: string): boolean {
     return /\b\d{1,3}\s*v(?:erse)?s?\.?\s*\d{1,3}\b/.test(text)
 }
 
-/** Next/back/previous and lone-number jumps are intentional — allow auto-show. */
+/** Next/back/previous verse or chapter and lone-number jumps are intentional — allow auto-show. */
 function isVerseJumpOrCommand(transcript: string): boolean {
     const t = transcript
         .toLowerCase()
@@ -527,12 +537,41 @@ function isVerseJumpOrCommand(transcript: string): boolean {
     if (!t) return false
     if (t === "next" || t === "back" || t === "previous" || t === "go back") return true
     if (/\b(?:next|previous|following|last)\s+verse\b/.test(t)) return true
+    if (/\b(?:next|previous|following|last)\s+chapter\b/.test(t)) return true
+    if (/\b(?:chapter after that|chapter before that|go back a chapter|back a chapter)\b/.test(t)) return true
     if (/\b(?:that verse again|same verse|repeat that verse|go back to that verse|back to that verse|verse after that)\b/.test(t)) return true
     // Lone number utterance ("14", "twenty eight") while context is warm
     if (/^\d{1,3}$/.test(t)) return true
     if (/^(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:\s+(?:one|two|three|four|five|six|seven|eight|nine))?$/.test(t)) return true
     if (/^(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen)$/.test(t)) return true
     return false
+}
+
+/**
+ * Handle "NIV translation" / "switch to KJV" style commands.
+ * Updates STT + drawer bible version when the translation is installed; re-projects
+ * the latest verse so the new translation appears immediately.
+ * Returns true when the utterance matched a translation command pattern (consumes it).
+ */
+function tryTranslationSwitch(transcript: string): boolean {
+    const spoken = extractTranslationCommand(transcript)
+    if (!spoken) return false
+
+    void import("./sttScriptureHelper").then(({ applySpokenBibleVersion, showDetection }) => {
+        const applied = applySpokenBibleVersion(spoken)
+        if (!applied) {
+            console.log(`[STT] Translation "${spoken}" not found in installed scriptures`)
+            return
+        }
+        console.log(`[STT] Switched Bible version to ${applied.name} (${applied.id})`)
+        const latest = bibleDetector.getLatestDetection()
+        const settings = get(sttSettings)
+        if (latest && settings.autoShowBible) {
+            void showDetection(latest, applied.id)
+        }
+    })
+
+    return true
 }
 
 function autoShowIfEnabled(detection: BibleDetection): void {

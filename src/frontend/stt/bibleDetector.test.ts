@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { BibleDetector } from "./bibleDetector"
+import { BibleDetector, extractTranslationCommand } from "./bibleDetector"
 
 describe("BibleDetector", () => {
     let detector: BibleDetector
@@ -406,6 +406,110 @@ describe("BibleDetector", () => {
         it("ignores 'next' inside longer speech", () => {
             detector.processTranscript("John 3:16")
             expect(detector.processTranscript("next week we will meet again")).toEqual([])
+        })
+    })
+
+    describe("next / previous chapter command", () => {
+        it("advances to the next chapter at verse 1", () => {
+            detector.processTranscript("John 3:16")
+            const [d] = detector.processTranscript("next chapter")
+            expect(d).toMatchObject({ bookName: "John", chapter: 4, verseStart: 1, source: "contextual" })
+        })
+
+        it("goes back a chapter at verse 1", () => {
+            detector.processTranscript("Romans 8:28")
+            const [d] = detector.processTranscript("previous chapter")
+            expect(d).toMatchObject({ bookName: "Romans", chapter: 7, verseStart: 1 })
+        })
+
+        it("accepts 'following chapter' and 'last chapter'", () => {
+            detector.processTranscript("Genesis 2:3")
+            const [next] = detector.processTranscript("following chapter")
+            expect(next).toMatchObject({ bookName: "Genesis", chapter: 3, verseStart: 1 })
+            const [prev] = detector.processTranscript("last chapter")
+            expect(prev).toMatchObject({ bookName: "Genesis", chapter: 2, verseStart: 1 })
+        })
+
+        it("accepts 'go back a chapter'", () => {
+            detector.processTranscript("Psalms 23:1")
+            const [d] = detector.processTranscript("go back a chapter")
+            expect(d).toMatchObject({ bookName: "Psalms", chapter: 22, verseStart: 1 })
+        })
+
+        it("does nothing without history", () => {
+            expect(detector.processTranscript("next chapter")).toEqual([])
+            expect(detector.processTranscript("previous chapter")).toEqual([])
+        })
+
+        it("does not advance past the book's last chapter", () => {
+            detector.processTranscript("Jude 1:3")
+            expect(detector.processTranscript("next chapter")).toEqual([])
+        })
+
+        it("does not go before chapter 1", () => {
+            detector.processTranscript("Genesis 1:1")
+            expect(detector.processTranscript("previous chapter")).toEqual([])
+        })
+
+        it("keeps warm context so verse jumps work after a chapter change", () => {
+            detector.processTranscript("John 3:16")
+            detector.processTranscript("next chapter")
+            const [d] = detector.processTranscript("verse 7")
+            expect(d).toMatchObject({ bookName: "John", chapter: 4, verseStart: 7 })
+        })
+
+        it("does not treat 'next chapter' as 'next verse'", () => {
+            detector.processTranscript("John 3:16")
+            const [d] = detector.processTranscript("next chapter")
+            expect(d.verseStart).toBe(1)
+            expect(d.chapter).toBe(4)
+        })
+    })
+
+    describe("spoken translation switch (extractTranslationCommand)", () => {
+        it("matches 'NIV translation'", () => {
+            expect(extractTranslationCommand("NIV translation")).toBe("niv")
+        })
+
+        it("matches 'switch to KJV'", () => {
+            expect(extractTranslationCommand("switch to KJV")).toBe("kjv")
+        })
+
+        it("matches 'KJV version'", () => {
+            expect(extractTranslationCommand("KJV version")).toBe("kjv")
+        })
+
+        it("matches 'change to the ESV'", () => {
+            expect(extractTranslationCommand("change to the ESV")).toBe("esv")
+        })
+
+        it("matches 'use the New International Version'", () => {
+            expect(extractTranslationCommand("use the New International Version")).toBe("new international version")
+        })
+
+        it("matches 'King James version'", () => {
+            expect(extractTranslationCommand("King James version")).toBe("king james")
+        })
+
+        it("matches trailing please", () => {
+            expect(extractTranslationCommand("switch to NIV please")).toBe("niv")
+        })
+
+        it("ignores bare abbreviation mid-sermon", () => {
+            expect(extractTranslationCommand("the NIV says for God so loved")).toBeNull()
+            expect(extractTranslationCommand("NIV")).toBeNull()
+            expect(extractTranslationCommand("we read from KJV this morning")).toBeNull()
+        })
+
+        it("ignores ordinary speech", () => {
+            expect(extractTranslationCommand("next verse")).toBeNull()
+            expect(extractTranslationCommand("John 3:16")).toBeNull()
+            expect(extractTranslationCommand("switch to the next song")).toBeNull()
+        })
+
+        it("ignores unknown translation names even with cues", () => {
+            expect(extractTranslationCommand("Foobar translation")).toBeNull()
+            expect(extractTranslationCommand("switch to Foobar")).toBeNull()
         })
     })
 
