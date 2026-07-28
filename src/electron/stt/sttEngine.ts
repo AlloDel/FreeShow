@@ -46,14 +46,14 @@ const VAD_MAX_SPEECH = 12
  */
 const VAD_THRESHOLD = 0.5
 /** Minimum speech duration before VAD opens (seconds). Short so "4" / "next" count. */
-const VAD_MIN_SPEECH = 0.12
+const VAD_MIN_SPEECH = 0.08
 /**
  * Cheap RMS gate applied only while idle (no live stream). Chunks quieter than
  * this skip Silero acceptWaveform entirely — saves CPU during silence without
  * dropping audio once speech is underway (VAD still needs trailing silence).
  * Kept low so quiet short verse numbers after a pause are not skipped.
  */
-const IDLE_RMS_GATE = 0.004
+const IDLE_RMS_GATE = 0.003
 
 export class SttEngine extends EventEmitter {
     isRunning = false
@@ -159,7 +159,18 @@ export class SttEngine extends EventEmitter {
                     this.lastPartial = text
                     this.emitTranscript({ type: "partial", transcript: text })
                 }
-            } else if (!this.liveStream) {
+            } else if (this.liveStream) {
+                // Trailing audio after VAD drops speech — keep feeding the open stream until
+                // Silero pops a segment and finalizeUtterance runs (short digits often land here).
+                this.liveStream.acceptWaveform({ sampleRate: SAMPLE_RATE, samples })
+                while (this.recognizer.isReady(this.liveStream)) this.recognizer.decode(this.liveStream)
+
+                const text: string = (this.recognizer.getResult(this.liveStream).text || "").trim()
+                if (text && text !== this.lastPartial) {
+                    this.lastPartial = text
+                    this.emitTranscript({ type: "partial", transcript: text })
+                }
+            } else {
                 this.pushPreroll(samples)
             }
 

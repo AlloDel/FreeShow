@@ -104,10 +104,10 @@ const CONTEXT_TIMEOUT_MS = 60_000
 /**
  * How long an incomplete command fragment ("next", "verse", …) waits for the
  * rest of the phrase when VAD/ASR splits one spoken command into multiple finals.
- * Kept short so listening never feels frozen; bare "next"/"previous"/"back"
- * auto-fire as verse navigation when the window expires without a continuation.
+ * Kept long enough for slow speech merge; bare "next"/"previous"/"back" expire
+ * with no action (no auto-fire) when the window ends without a continuation.
  */
-export const PENDING_COMMAND_TTL_MS = 1400
+export const PENDING_COMMAND_TTL_MS = 1800
 
 type PendingCommandKind = "next" | "previous" | "back" | "verse"
 
@@ -167,20 +167,10 @@ export class BibleDetector {
      * Does not block transcript listening — only delays *acting* on bare navigation words.
      */
     private pendingCommand: PendingCommand | null = null
-    /** Timer that auto-resolves bare next/previous/back when the merge window expires. */
+    /** Timer that expires bare next/previous/back when the merge window ends (no auto-fire). */
     private pendingCommandTimer: ReturnType<typeof setTimeout> | null = null
-    /** Optional sink for TTL auto-resolve detections (wired by sttManager). */
-    private onPendingAutoResolve: ((detections: BibleDetection[]) => void) | null = null
     /** Debug lines for stt-debug.log (drained by the manager after each process). */
     private debugEvents: string[] = []
-
-    /**
-     * Register a handler for detections produced when a bare navigation command's
-     * merge window expires without "verse"/"chapter" continuation.
-     */
-    setPendingAutoResolveHandler(handler: ((detections: BibleDetection[]) => void) | null): void {
-        this.onPendingAutoResolve = handler
-    }
 
     /**
      * Process a transcript and return any Bible references found.
@@ -886,8 +876,8 @@ export class BibleDetector {
         this.pendingCommand = { kind, setAt: Date.now(), raw }
         this.pushDebug(`pending_command set kind=${kind} raw="${raw}"`)
         console.log(`[STT] Incomplete command pending: "${raw}" (kind=${kind}) — waiting for continuation`)
-        // Bare navigation: auto-fire verse step when the merge window ends without continuation.
-        // "verse" alone never auto-fires (needs a number).
+        // Bare navigation: expire the merge window without advancing when no continuation arrives.
+        // "verse" alone never auto-fires (needs a number) — lazy-expired in isPendingCommandLive.
         if (kind === "next" || kind === "previous" || kind === "back") {
             this.pendingCommandTimer = setTimeout(() => this.resolvePendingCommandTimeout(), PENDING_COMMAND_TTL_MS)
         }
@@ -910,36 +900,18 @@ export class BibleDetector {
     }
 
     /**
-     * TTL elapsed with no "verse"/"chapter" continuation — treat bare "next" as next-verse
-     * (and previous/back similarly). Listening was never paused; only the action was deferred.
+     * TTL elapsed with no "verse"/"chapter" continuation — clear pending with no verse advance.
+     * Bare "next" alone must not auto-fire next-verse (avoids accidental advances on hesitation).
      */
     private resolvePendingCommandTimeout(): void {
         this.pendingCommandTimer = null
         if (!this.pendingCommand) return
 
         const { kind, raw } = this.pendingCommand
-        if (kind === "verse") {
-            this.clearPendingCommand("expired")
-            return
-        }
-
-        let detection: BibleDetection | null = null
-        if (kind === "next") detection = this.checkNextVerseCommand("next verse")
-        else if (kind === "previous") detection = this.checkPreviousVerseCommand("previous verse")
-        else if (kind === "back") detection = this.stepBackOneVerse(raw)
-
-        if (!detection) {
-            this.clearPendingCommand("expired")
-            return
-        }
-
-        this.clearPendingCommand("completed")
-        this.pendingBook = null
-        this.setContext(detection, false)
-        this.pushRecent(detection)
-        this.pushDebug(`pending_command auto_fired kind=${kind} → ${detection.bookName} ${detection.chapter}:${detection.verseStart}`)
-        console.log(`[STT] Pending command auto-fired: "${raw}" → ${detection.bookName} ${detection.chapter}:${detection.verseStart}`)
-        this.onPendingAutoResolve?.([detection])
+        this.clearPendingTimer()
+        this.pendingCommand = null
+        this.pushDebug(`pending_command expired no action kind=${kind} raw="${raw}"`)
+        console.log(`[STT] Pending command expired with no action: "${raw}" (kind=${kind})`)
     }
 
     private pushDebug(message: string): void {
@@ -948,18 +920,14 @@ export class BibleDetector {
 
     private isPendingCommandLive(): boolean {
         if (!this.pendingCommand) return false
-        // Timer owns expiry for navigation commands (auto-fire). Lazy expiry only for
-        // "verse" cues (no auto-fire) or if the timer was cleared without resolving.
         if (Date.now() - this.pendingCommand.setAt > PENDING_COMMAND_TTL_MS) {
+            // Expire without action (no auto-fire for bare next/previous/back)
             if (this.pendingCommand.kind === "verse") {
                 this.clearPendingCommand("expired")
-                return false
-            }
-            // Navigation pending past TTL without a live timer — resolve now (e.g. timer missed).
-            if (!this.pendingCommandTimer) {
+            } else {
                 this.resolvePendingCommandTimeout()
-                return false
             }
+            return false
         }
         return true
     }
@@ -1010,7 +978,22 @@ export class BibleDetector {
                     return [detection]
                 }
             }
-            if (VERSE_CUE_AT_START.test(whole) || NEXT_VERSE_PHRASES.some((p) => mergedLower.includes(p))) {
+            // "verse 12" / "vs 12" after bare "next" → jump to that verse (not next-verse +1)
+            const verseJump = this.extractVerseOnly(cleaned, false)
+            if (verseJump) {
+                const front = this.recentDetections[0]
+                if (front) {
+                    const detection = this.makeDetection(front.bookNumber, front.bookName, front.chapter, verseJump.start, verseJump.end, 0.95, cleaned, "contextual")
+                    this.clearPendingCommand("completed")
+                    this.pendingBook = null
+                    this.setContext(detection, false)
+                    this.pushRecent(detection)
+                    this.pushDebug(`pending_command merged "${pending.raw}" + "${cleaned}" → verse ${verseJump.start}`)
+                    return [detection]
+                }
+            }
+            // Bare "verse" / "next verse" without a number → advance one verse
+            if (VERSE_CUE_ONLY.test(whole) || NEXT_VERSE_PHRASES.some((p) => mergedLower.includes(p))) {
                 const detection = this.checkNextVerseCommand("next verse")
                 if (detection) {
                     this.clearPendingCommand("completed")
@@ -1039,7 +1022,21 @@ export class BibleDetector {
                     return [detection]
                 }
             }
-            if (VERSE_CUE_AT_START.test(whole) || PREVIOUS_VERSE_PHRASES.some((p) => mergedLower.includes(p))) {
+            // "verse 12" after previous/back → jump to that verse
+            const verseJump = this.extractVerseOnly(cleaned, false)
+            if (verseJump) {
+                const front = this.recentDetections[0]
+                if (front) {
+                    const detection = this.makeDetection(front.bookNumber, front.bookName, front.chapter, verseJump.start, verseJump.end, 0.95, cleaned, "contextual")
+                    this.clearPendingCommand("completed")
+                    this.pendingBook = null
+                    this.setContext(detection, false)
+                    this.pushRecent(detection)
+                    this.pushDebug(`pending_command merged "${pending.raw}" + "${cleaned}" → verse ${verseJump.start}`)
+                    return [detection]
+                }
+            }
+            if (VERSE_CUE_ONLY.test(whole) || PREVIOUS_VERSE_PHRASES.some((p) => mergedLower.includes(p))) {
                 if (pending.kind === "back") {
                     // Bare "back" historically stepped one verse back; complete that intent.
                     const stepped = this.stepBackOneVerse(cleaned)

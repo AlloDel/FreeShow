@@ -61,8 +61,11 @@ quotation-matching decision is made here (`bibleDetector.ts`, `quoteMatcher.ts`)
   `CONTEXT_TIMEOUT_MS`), later utterances like `"verse 15"`, `"verses 5 through 8"`, or (only
   right after a chapter-only mention) a bare leading number `"16 for God so loved..."` resolve
   against that context.
-- **"Previous / next verse" voice commands** — phrases like "previous verse" / "next" / "back"
-  re-fire or step the most recent detection.
+- **"Previous / next verse" voice commands** — phrases like "previous verse" / "next verse" /
+  "back" re-fire or step the most recent detection. Bare `"next"` / `"previous"` / `"back"` are
+  held briefly for merge with a following final (`verse`, `verse 12`, `chapter`); if the merge
+  window expires with no continuation they clear with **no action** (no auto-advance).
+  `"next"` + `"verse 12"` jumps to verse 12 in the current chapter.
 
 Spoken numbers ("fifty three", "sixteen") and mixed digit/word forms are normalized via
 `parseNumber()` / `SPOKEN_NUMBERS` (`books.ts`). Only whole-word matches are used for book names —
@@ -142,13 +145,57 @@ Logged (no audio chunks): session start/stop + model/decoding mode, settings sum
 throttled partials (~1s), detections, voice commands, translation switch ok/fail, auto-show
 projected/skipped (reason), quote-index ready, errors.
 
+## Latency budget (target)
+
+Rough end-to-end budget for a short spoken reference (“John 3:16”) with auto-show on:
+
+| Stage | Budget |
+| --- | --- |
+| Mic → AudioWorklet chunk (~64 ms @ 16 kHz) | ~64 ms |
+| IPC + VAD open + first partial | ~150–300 ms |
+| Partial stabilize → pending commit delay | ~partial commit delay in `sttManager` |
+| Final + detection → `playScripture` | ~50–150 ms |
+| **Spoken end → verse on screen** | **~0.5–1.5 s** typical |
+
+Incomplete command merge (`next` + `verse`) waits up to `PENDING_COMMAND_TTL_MS` (1800 ms) for
+the continuation; bare `next`/`previous`/`back` expire with **no action** (no auto-advance).
+
+Trailing audio after Silero drops speech is still fed into the open recognizer stream so short
+digits (“4”) are not cut off.
+
+## Eval harness
+
+Regression fixtures live under `eval/`:
+
+- `eval/fixtures.ts` — transcript → expected detection cases (Zephaniah 2 vs 4, next+verse 12
+  jump, bare next no advance, …)
+- `eval/runFixtures.test.ts` — runs `BibleDetector` (+ pending merge sequences) against fixtures
+
+Also: `sttManager.detectionPending.test.ts` covers pending richness helpers (`detectionPending.ts`)
+so a chapter-only verse 1 cannot wipe a pending 2:4.
+
+Run all STT unit + eval tests:
+
+```bash
+npm run test:unit -- src/frontend/stt/
+```
+
+Or only the eval suite:
+
+```bash
+npm run test:unit -- src/frontend/stt/eval/
+```
+
 ## Files
 
 - `sttStore.ts` — Svelte stores: enabled/status/transcript/detections/settings/models.
 - `sttManager.ts` — audio capture (AudioWorklet → 16 kHz PCM), IPC plumbing, transcript →
-  detection → auto-show orchestration (reference + quotation ensemble).
+  detection → auto-show orchestration (reference + quotation ensemble). Prefer richer pending
+  detections over truncated finals for the same book+chapter.
+- `detectionPending.ts` — pure richness helpers for pending vs final preference.
 - `sttDebug.ts` — renderer debug helpers; formats lines and forwards to main via `DEBUG_LOG`.
 - `bibleDetector.ts` / `bibleDetector.test.ts` — the unified reference detector and its tests.
+- `eval/` — fixture-driven regression harness for detector + pending-command merge.
 - `quoteMatcher.ts` / `quoteMatcher.test.ts` — progressive quote-by-content matching.
 - `books.ts` — Bible book metadata, ASR confusion aliases, reference feedwords docs.
 - `sttScriptureHelper.ts` — bridges a `BibleDetection` to FreeShow's scripture store/output;

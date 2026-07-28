@@ -6,6 +6,7 @@ import type { BibleDetection, SttStatus, TranscriptEvent, ModelInfo } from "../.
 import { sttBibleVersions, sttDebugLogPath, sttDetections, sttEnabled, sttError, sttModels, sttPartialTranscript, sttSettings, sttStatus, sttTranscript } from "./sttStore"
 import { installSttSettingsAutoBackup, restoreSttSettings } from "./sttSettingsBackup"
 import { BibleDetector, extractTranslationCommand } from "./bibleDetector"
+import { bookChapterKey, isStrictlyRicherDetection } from "./detectionPending"
 import { QuoteMatcher } from "./quoteMatcher"
 import { formatDetectionDebugLine, requestSttDebugLogPath, resetSttDebugPartialThrottle, sttDebug, sttDebugPartial } from "./sttDebug"
 
@@ -15,12 +16,6 @@ const STT_CHANNEL = "STT"
 const bibleDetector = new BibleDetector()
 /** Quote-by-content matcher (spoken verse text vs active translation) — progressive on partials. */
 const quoteMatcher = new QuoteMatcher()
-
-// Bare "next"/"previous"/"back" auto-fire when the merge window expires (non-blocking listen).
-bibleDetector.setPendingAutoResolveHandler((detections) => {
-    flushDetectorDebug()
-    detections.forEach((d) => handleDetection(d))
-})
 
 let quoteIndexPromise: Promise<void> | null = null
 let quoteIndexRequestId = 0
@@ -365,16 +360,22 @@ function normalizeForCompare(text: string): string {
 function scheduleDetection(detection: BibleDetection): void {
     const key = detectionKey(detection)
 
-    // A newer verse for the same book+chapter replaces a still-pending older one
-    // (the earlier partial saw a prefix of the verse number)
+    // Same book+chapter: only cancel/replace an existing pending when the NEW detection
+    // is strictly richer (higher verseStart, or same verseStart with verseEnd). Never let
+    // a chapter-only verse 1 wipe a pending full verse like 2:4.
+    let blockedByRicherPending = false
     pendingDetections.forEach((entry, existingKey) => {
         if (existingKey === key) return
-        if (entry.detection.bookNumber === detection.bookNumber && entry.detection.chapter === detection.chapter) {
+        if (entry.detection.bookNumber !== detection.bookNumber || entry.detection.chapter !== detection.chapter) return
+        if (isStrictlyRicherDetection(detection, entry.detection)) {
             clearTimeout(entry.timer)
             pendingDetections.delete(existingKey)
+        } else {
+            blockedByRicherPending = true
         }
     })
 
+    if (blockedByRicherPending) return
     if (pendingDetections.has(key) || utteranceCommittedKeys.has(key)) return
     const timer = setTimeout(() => {
         pendingDetections.delete(key)
@@ -410,11 +411,19 @@ function flushDetectorDebug(): void {
 }
 
 /** Run the bible detector on a final and commit any new hits. */
-function processFinalDetections(transcript: string): void {
-    const referenceHits = bibleDetector.processTranscript(transcript, { isFinal: true }).filter((d) => !utteranceCommittedKeys.has(detectionKey(d)))
+function processFinalDetections(transcript: string, options?: { preferRicherPending?: boolean }): void {
+    const referenceHits = bibleDetector.processTranscript(transcript, { isFinal: true })
     flushDetectorDebug()
-    if (referenceHits.length) {
-        referenceHits.forEach((d) => handleDetection(d))
+
+    const hits = options?.preferRicherPending ? flushPendingDetectionsPreferringRicher(referenceHits) : referenceHits.filter((d) => !utteranceCommittedKeys.has(detectionKey(d)))
+
+    if (hits.length) {
+        hits.forEach((d) => {
+            const key = detectionKey(d)
+            if (utteranceCommittedKeys.has(key)) return
+            utteranceCommittedKeys.add(key)
+            handleDetection(d)
+        })
         return
     }
     const quoteHit = tryQuoteMatch(transcript)
@@ -499,9 +508,52 @@ function tryQuoteMatch(transcript: string): BibleDetection | null {
 function flushPendingDetections(commit: boolean): void {
     pendingDetections.forEach(({ detection, timer }) => {
         clearTimeout(timer)
-        if (commit) handleDetection(detection)
+        if (commit) {
+            utteranceCommittedKeys.add(detectionKey(detection))
+            handleDetection(detection)
+        }
     })
     pendingDetections.clear()
+}
+
+/**
+ * When a final's text differs from the last partial: commit pending detections that are
+ * richer than any final hit for the same book+chapter, drop weaker pendings, and return
+ * the final hits that should still be processed (not superseded by a richer pending).
+ */
+function flushPendingDetectionsPreferringRicher(finalHits: BibleDetection[]): BibleDetection[] {
+    const surviving = finalHits.filter((d) => !utteranceCommittedKeys.has(detectionKey(d)))
+    const supersededBookChapters = new Set<string>()
+
+    pendingDetections.forEach(({ detection, timer }) => {
+        clearTimeout(timer)
+        const bc = bookChapterKey(detection)
+        const rivalIdx = surviving.findIndex((f) => bookChapterKey(f) === bc)
+        if (rivalIdx < 0) {
+            // No final rival — keep the pending commit
+            const key = detectionKey(detection)
+            if (!utteranceCommittedKeys.has(key)) {
+                utteranceCommittedKeys.add(key)
+                handleDetection(detection)
+            }
+            return
+        }
+        const rival = surviving[rivalIdx]
+        if (isStrictlyRicherDetection(detection, rival)) {
+            // Pending is richer (e.g. partial saw 2:4, final truncated to chapter-only 2:1)
+            const key = detectionKey(detection)
+            if (!utteranceCommittedKeys.has(key)) {
+                utteranceCommittedKeys.add(key)
+                handleDetection(detection)
+            }
+            surviving.splice(rivalIdx, 1)
+            supersededBookChapters.add(bc)
+        }
+        // else final is richer or equal — drop pending, keep final
+    })
+    pendingDetections.clear()
+
+    return surviving.filter((d) => !supersededBookChapters.has(bookChapterKey(d)) && !utteranceCommittedKeys.has(detectionKey(d)))
 }
 
 function endUtterance(): void {
@@ -551,8 +603,8 @@ function handleTranscript(event: TranscriptEvent): void {
                         flushDetectorDebug()
                     }
                 } else {
-                    flushPendingDetections(false)
-                    processFinalDetections(event.transcript)
+                    // Prefer richer pending (e.g. 2:4) over a truncated final (chapter-only 2:1)
+                    processFinalDetections(event.transcript, { preferRicherPending: true })
                 }
                 endUtterance()
             } else {

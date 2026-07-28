@@ -93,7 +93,24 @@ the same `{ channel, data }` envelope pattern as `receiveAudio.ts`. `receiveStt.
 
 When STT **Debug logging** is enabled (frontend setting, default on), session start/stop and
 renderer events are appended to `<userData>/stt-debug.log`. See `src/frontend/stt/README.md`
-for what is logged and how to share the file for bible testing.
+for what is logged, latency budget notes, and how to share the file for bible testing.
+
+Typical path (macOS): `~/Library/Application Support/FreeShow/stt-debug.log`.
+
+## VAD / trailing audio
+
+`pushAudio` always feeds the open `liveStream` while an utterance is in progress — including
+when Silero briefly reports not-detected — so trailing samples (short digits) are decoded until
+`finalizeUtterance`. Idle RMS gate (~0.003) and `minSpeechDuration` (~0.08 s) are tuned for
+quiet short tokens.
+
+## Frontend eval tests
+
+Detector regression fixtures (not run in Electron) live in `src/frontend/stt/eval/`. Run:
+
+```bash
+npm run test:unit -- src/frontend/stt/
+```
 
 ## Files
 

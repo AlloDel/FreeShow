@@ -444,26 +444,23 @@ describe("BibleDetector", () => {
             expect(d).toMatchObject({ bookName: "John", chapter: 3, verseStart: 17 })
         })
 
-        it("auto-fires next verse when bare 'next' TTL expires without continuation", () => {
-            const auto = vi.fn()
-            detector.setPendingAutoResolveHandler(auto)
+        it("expires bare 'next' with no action when TTL elapses without continuation", () => {
             detector.processTranscript("John 3:16")
             expect(detector.processTranscript("next", { isFinal: true })).toEqual([])
-            expect(auto).not.toHaveBeenCalled()
-            vi.advanceTimersByTime(1400)
-            expect(auto).toHaveBeenCalledTimes(1)
-            expect(auto.mock.calls[0][0][0]).toMatchObject({ bookName: "John", chapter: 3, verseStart: 17 })
+            vi.advanceTimersByTime(2000)
+            expect(detector.takeDebugEvents().some((e) => e.includes("pending_command expired no action"))).toBe(true)
+            // No verse advance — still on John 3:16 context for a later "next verse"
+            const [d] = detector.processTranscript("next verse", { isFinal: true })
+            expect(d).toMatchObject({ bookName: "John", chapter: 3, verseStart: 17 })
         })
 
         it("does not auto-fire when 'verse' completes the pending before TTL", () => {
-            const auto = vi.fn()
-            detector.setPendingAutoResolveHandler(auto)
             detector.processTranscript("John 3:16")
             expect(detector.processTranscript("next", { isFinal: true })).toEqual([])
             const [d] = detector.processTranscript("verse", { isFinal: true })
             expect(d).toMatchObject({ bookName: "John", chapter: 3, verseStart: 17 })
-            vi.advanceTimersByTime(2000)
-            expect(auto).not.toHaveBeenCalled()
+            vi.advanceTimersByTime(2500)
+            expect(detector.takeDebugEvents().some((e) => e.includes("auto_fired"))).toBe(false)
         })
 
         it("flushes pending 'next' when a book name follows (does not eat it)", () => {
@@ -476,21 +473,21 @@ describe("BibleDetector", () => {
         })
 
         it("does not treat words like 'very' as verse continuation after pending 'next'", () => {
-            const auto = vi.fn()
-            detector.setPendingAutoResolveHandler(auto)
             detector.processTranscript("John 3:16")
             expect(detector.processTranscript("next", { isFinal: true })).toEqual([])
             expect(detector.processTranscript("very good point", { isFinal: true })).toEqual([])
-            vi.advanceTimersByTime(2000)
-            // Pending was flushed by unrelated speech — no auto-fire
-            expect(auto).not.toHaveBeenCalled()
+            vi.advanceTimersByTime(2500)
+            // Pending was flushed by unrelated speech — no advance
+            expect(detector.takeDebugEvents().some((e) => e.includes("auto_fired"))).toBe(false)
+            const [d] = detector.processTranscript("next verse", { isFinal: true })
+            expect(d).toMatchObject({ bookName: "John", chapter: 3, verseStart: 17 })
         })
 
-        it("merges final 'next' then 'verse 12' as next verse", () => {
+        it("merges final 'next' then 'verse 12' as jump to verse 12", () => {
             detector.processTranscript("John 3:16")
             expect(detector.processTranscript("next", { isFinal: true })).toEqual([])
             const [d] = detector.processTranscript("verse 12", { isFinal: true })
-            expect(d).toMatchObject({ bookName: "John", chapter: 3, verseStart: 17 })
+            expect(d).toMatchObject({ bookName: "John", chapter: 3, verseStart: 12 })
         })
     })
 
