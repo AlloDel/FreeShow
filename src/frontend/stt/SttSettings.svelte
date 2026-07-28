@@ -33,6 +33,11 @@
         sttSettings.update((s) => ({ ...s, confidenceThreshold: value }))
     }
 
+    function handleQuoteThresholdChange(e: Event) {
+        const value = parseFloat((e.target as HTMLInputElement).value)
+        sttSettings.update((s) => ({ ...s, autoShowQuoteMinConfidence: value }))
+    }
+
     function handleBibleVersionChange(e: Event) {
         const versionId = (e.target as HTMLSelectElement).value
         sttSettings.update((s) => ({ ...s, bibleVersionId: versionId }))
@@ -65,6 +70,7 @@
     $: currentModelDownloaded = activeModel?.downloaded || false
     $: downloadPercent = $sttStatus.downloadTotal > 0 ? Math.round(($sttStatus.downloadProgress / $sttStatus.downloadTotal) * 100) : 0
     $: isDev = !!importMetaEnv.env?.DEV
+    $: isWhisperModel = ($sttSettings.model || "").includes("whisper") || activeModel?.kind === "offline-whisper"
 </script>
 
 <div class="stt-settings">
@@ -89,6 +95,9 @@
                 <option value="nemotron-en-int8">NVIDIA Nemotron (English)</option>
             {/if}
         </select>
+        {#if isWhisperModel}
+            <div class="stt-model-warn">Whisper needs more RAM (~1 GB model) and is utterance-based — keep Nemotron as the default for short Bible commands.</div>
+        {/if}
     </div>
 
     <!-- Progress bar shown when auto-downloading -->
@@ -124,7 +133,7 @@
     </div>
 
     <div class="stt-setting-row">
-        <label class="stt-setting-label" for="match-quoted-verse" title="Match spoken verse wording against your Bible translation on streaming transcripts (default on)">Match quoted verse text</label>
+        <label class="stt-setting-label" for="match-quoted-verse" title="Match spoken verse wording against your Bible translation (default off — enable when you want quote-by-content; quotations need higher confidence)">Match quoted verse text</label>
         <input type="checkbox" id="match-quoted-verse" class="stt-checkbox" checked={$sttSettings.matchQuotedVerseText} on:change={toggleMatchQuotedVerseText} />
     </div>
 
@@ -147,12 +156,21 @@
         </select>
     </div>
 
-    <!-- Confidence threshold -->
+    <!-- Confidence threshold (spoken refs) -->
     <div class="stt-setting-row">
-        <label class="stt-setting-label" for="stt-confidence">Min. Confidence</label>
+        <label class="stt-setting-label" for="stt-confidence" title="Minimum confidence for spoken references (direct/contextual)">Min. Confidence (refs)</label>
         <div class="stt-slider-container">
             <input id="stt-confidence" type="range" class="stt-slider" min="0.5" max="1.0" step="0.05" value={$sttSettings.confidenceThreshold} on:input={handleThresholdChange} />
             <span class="stt-slider-value">{Math.round($sttSettings.confidenceThreshold * 100)}%</span>
+        </div>
+    </div>
+
+    <!-- Quote confidence (source-aware, higher default) -->
+    <div class="stt-setting-row">
+        <label class="stt-setting-label" for="stt-quote-confidence" title="Quotations need a higher bar than spoken refs (default 90%)">Min. Confidence (quotes)</label>
+        <div class="stt-slider-container">
+            <input id="stt-quote-confidence" type="range" class="stt-slider" min="0.7" max="1.0" step="0.05" value={$sttSettings.autoShowQuoteMinConfidence} on:input={handleQuoteThresholdChange} />
+            <span class="stt-slider-value">{Math.round($sttSettings.autoShowQuoteMinConfidence * 100)}%</span>
         </div>
     </div>
 </div>
@@ -215,6 +233,14 @@
         font-size: 11px;
         color: var(--connected);
         opacity: 0.9;
+    }
+
+    .stt-model-warn {
+        font-size: 10px;
+        color: var(--text);
+        opacity: 0.7;
+        line-height: 1.35;
+        margin-top: 2px;
     }
 
     .stt-debug-path {

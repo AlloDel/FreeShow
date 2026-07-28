@@ -6,8 +6,9 @@ capture, the Bible-reference detector, quote-by-content matching, the Svelte UI
 pipeline.
 
 **All Bible detection is frontend-only.** The Electron side is a pure speech-to-text transcriber
-(NVIDIA Nemotron via sherpa-onnx) with no concept of scripture; every reference-parsing and
-quotation-matching decision is made here (`bibleDetector.ts`, `quoteMatcher.ts`).
+(Nemotron streaming or optional Whisper via sherpa-onnx, in a forked worker) with no concept of
+scripture; every reference-parsing and quotation-matching decision is made here
+(`bibleDetector.ts`, `quoteMatcher.ts`, `quoteEmbedMatcher.ts`).
 
 ## Data flow
 
@@ -18,10 +19,10 @@ quotation-matching decision is made here (`bibleDetector.ts`, `quoteMatcher.ts`)
  AudioWorklet (sttManager.ts)
      │  16 kHz mono PCM, Int16, 1024-sample chunks (~64 ms)
      ▼
- IPC "STT" / AUDIO_DATA  ──────────────►  Electron: SttEngine (sherpa-onnx Nemotron)
-                                                │  Silero VAD (+ hotwords attempted; greedy fallback)
+IPC "STT" / AUDIO_DATA  ──────────────►  Electron worker (fork) → SttEngine / Whisper
+                                                │  Silero VAD; hotwords quarantined (disabled)
      ◄────────────────────────────────────────┘
- IPC "STT" / TRANSCRIPT
+IPC "STT" / TRANSCRIPT
      │  { type: "partial" | "final", transcript }
      ▼
  sttManager.ts: handleTranscript()
@@ -31,11 +32,11 @@ quotation-matching decision is made here (`bibleDetector.ts`, `quoteMatcher.ts`)
  │     direct / chapter-only / contextual / next-prev → BibleDetection[] (source: direct|contextual)
  │
  └── if no reference hit:
-       QuoteMatcher.match(rolling window)           ← progressive quote-by-content
-         inverted index over active Bible verse text → BibleDetection (source: quotation)
+       QuoteMatcher.matchCandidates → HybridNgramQuoteMatcher.rerank
+         lexical + char-trigram hybrid (ONNX embeddings = Phase 3.1)
      ▼
  sttManager.ts: handleDetection()
-     │  confidence-threshold gate, de-dupe, push to sttStore
+     │  source-aware confidence gate, de-dupe, push to sttStore
      ▼
  sttStore (sttDetections, sttTranscript, sttPartialTranscript, ...)
      │  drives SttOverlay.svelte (list, transcript, badges: ref|context|quote)
@@ -73,24 +74,24 @@ abbreviations are intentionally excluded from spoken matching.
 
 Reference feedwords (book names + chapter/verse) live in `BIBLE_REFERENCE_FEEDWORDS` and are
 mirrored into the Electron hotwords file — **not** verse text content (that causes hallucinations).
-Hotwords are attempted but Nemotron streaming falls back to greedy until sherpa-onnx #3572;
-detection accuracy comes from this post-ASR detector (including ASR confusion aliases).
+Hotword biasing is **quarantined/disabled** on the Electron side; detection accuracy comes from
+this post-ASR detector (including ASR confusion aliases).
 
-## Quote-by-content matcher (`quoteMatcher.ts`)
+## Quote-by-content matcher (`quoteMatcher.ts` + `quoteEmbedMatcher.ts`)
 
 When a speaker quotes verse text **without** (or before) saying the reference, `QuoteMatcher`
 scores a rolling window of recent transcript words against an inverted index of the active Bible
 translation (from `sttSettings.bibleVersionId` / active scripture via `loadJsonBible` /
-`scripturesCache`).
+`scripturesCache`). Candidates are then re-ranked by `HybridNgramQuoteMatcher` (character trigram
+Jaccard + word-order bonus). True ONNX embeddings are Phase 3.1 — the hybrid is the shippable step.
 
-Design (v1 — local, no embeddings):
+Design:
 
 - Significant words only (English stopwords dropped); IDF-weighted overlap scoring
 - Min ~3 significant query words; usually ≥3 overlapping terms (2 allowed if a term is rare)
-- Coverage ≥ ~55%; top candidate must beat runner-up by ~18% relative margin
-- Optional word-order bonus; 6s cooldown per verse to avoid thrash
-- Confidence mapped into ~0.86–0.95 (clears default Min. Confidence 0.85; still gated by Settings)
-- Setting **Match quoted verse text** defaults **ON** (disable if false positives)
+- Coverage ≥ ~55%; lexical runner-up margin; hybrid re-rank may override the lexical top hit
+- Confidence mapped into ~0.86–0.96; quotations need **`autoShowQuoteMinConfidence`** (default **0.9**)
+- Setting **Match quoted verse text** defaults **OFF** (conservative until proven)
 - Ensemble: if the reference detector fires for the same window, quotation is skipped;
   a successful quotation still warms `BibleDetector` context so "verse 17" / next / previous work
 
@@ -98,18 +99,17 @@ This is PewBeam/Rhema-style progressive retrieval — **not** generative LM pred
 
 ## Auto-show gating
 
-A detection reaching the UI does **not** automatically get projected. Two independent gates run
-in `sttManager.ts` before a verse is shown, both required:
+A detection reaching the UI does **not** automatically get projected. Gates in `sttManager.ts`:
 
-1. **Confidence threshold** (`handleDetection`) — `detection.confidence` must meet or exceed
-   `sttSettings.confidenceThreshold` (default **0.85**, adjustable in Settings). Detections below
-   the threshold are dropped entirely — not even added to the detections list.
+1. **Source-aware confidence** (`handleDetection` / `confidenceGate.ts`) — spoken refs use
+   `confidenceThreshold` (default **0.85**); quotations use `autoShowQuoteMinConfidence`
+   (default **0.9**). Below-threshold detections are dropped from the list.
 2. **Explicit-verse guard for contextual detections** (`autoShowIfEnabled`) — if
    `detection.source === "contextual"`, the snippet must contain an explicit verse-like pattern
    (`"3:16"`, `"verse 5"`, …) **or** be a verse-jump/command (`"next"`, `"14"`, `"previous verse"`)
    before auto-show fires. Chapter-only warm-ups still appear in the list but do not auto-project
    until a real verse is spoken. Quotation matches skip this guard (they already passed the
-   quote-matcher bar) and project when auto-show is on.
+   higher quote bar) and project when auto-show is on.
 
 If both gates pass and `sttSettings.autoShowBible` is enabled, `sttScriptureHelper.showDetection()`
 is called, which maps the detected book name to FreeShow's book index, sets the active Bible
@@ -195,8 +195,11 @@ npm run test:unit -- src/frontend/stt/eval/
 - `detectionPending.ts` — pure richness helpers for pending vs final preference.
 - `sttDebug.ts` — renderer debug helpers; formats lines and forwards to main via `DEBUG_LOG`.
 - `bibleDetector.ts` / `bibleDetector.test.ts` — the unified reference detector and its tests.
-- `eval/` — fixture-driven regression harness for detector + pending-command merge.
+- `eval/` — fixture-driven regression harness for detector + pending-command merge;
+  `whisperVsNemotron.md` notes eval before ever making Whisper the default.
 - `quoteMatcher.ts` / `quoteMatcher.test.ts` — progressive quote-by-content matching.
+- `quoteEmbedMatcher.ts` / `quoteEmbedMatcher.test.ts` — pluggable hybrid re-rank (n-gram Jaccard).
+- `confidenceGate.ts` — source-aware confidence thresholds (refs vs quotes).
 - `books.ts` — Bible book metadata, ASR confusion aliases, reference feedwords docs.
 - `sttScriptureHelper.ts` — bridges a `BibleDetection` to FreeShow's scripture store/output;
   also loads Bible JSON for the quote index.

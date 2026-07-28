@@ -43,7 +43,8 @@ export interface SttSettingsData {
     autoShowBible: boolean
     /**
      * Match spoken verse wording against the active Bible translation (progressive
-     * quote-by-content on ASR partials). Default ON — disable if false positives.
+     * quote-by-content on ASR partials). Default OFF until hybrid/embeddings prove
+     * low false-positive rate — enable deliberately.
      */
     matchQuotedVerseText: boolean
     /**
@@ -51,7 +52,13 @@ export interface SttSettingsData {
      * Default ON for bible testing — turn off to stop file writes.
      */
     debugLogging: boolean
+    /** Min confidence for spoken references (direct/contextual). Default 0.85. */
     confidenceThreshold: number
+    /**
+     * Higher bar for quotation auto-show / list inclusion (source-aware).
+     * Default 0.9 — quotes need stronger evidence than spoken refs.
+     */
+    autoShowQuoteMinConfidence: number
     microphoneId: string
     /** Selected Bible version ID for displaying detected verses. Empty = use current active. */
     bibleVersionId: string
@@ -60,9 +67,10 @@ export interface SttSettingsData {
 export const sttSettings: Writable<SttSettingsData> = writable({
     model: "nemotron-en-int8",
     autoShowBible: false,
-    matchQuotedVerseText: true,
+    matchQuotedVerseText: false,
     debugLogging: true,
     confidenceThreshold: 0.85,
+    autoShowQuoteMinConfidence: 0.9,
     microphoneId: "",
     bibleVersionId: ""
 })

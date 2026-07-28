@@ -7,6 +7,8 @@ import { sttBibleVersions, sttDebugLogPath, sttDetections, sttEnabled, sttError,
 import { installSttSettingsAutoBackup, restoreSttSettings } from "./sttSettingsBackup"
 import { BibleDetector, extractTranslationCommand } from "./bibleDetector"
 import { bookChapterKey, isStrictlyRicherDetection } from "./detectionPending"
+import { confidenceThresholdForSource, passesConfidenceThreshold } from "./confidenceGate"
+import { quoteEmbedMatcher } from "./quoteEmbedMatcher"
 import { QuoteMatcher } from "./quoteMatcher"
 import { formatDetectionDebugLine, requestSttDebugLogPath, resetSttDebugPartialThrottle, sttDebug, sttDebugPartial } from "./sttDebug"
 
@@ -32,6 +34,7 @@ sttSettings.subscribe((settings) => {
     quoteIndexWatchedVersion = key
     if (!settings.matchQuotedVerseText) {
         quoteMatcher.clear()
+        quoteEmbedMatcher.clear()
         quoteIndexPromise = null
         quoteIndexRequestId++
         return
@@ -456,6 +459,7 @@ async function ensureQuoteIndex(force = false): Promise<void> {
     const settings = get(sttSettings)
     if (!settings.matchQuotedVerseText) {
         quoteMatcher.clear()
+        quoteEmbedMatcher.clear()
         return
     }
 
@@ -476,6 +480,21 @@ async function ensureQuoteIndex(force = false): Promise<void> {
             await new Promise<void>((resolve) => setTimeout(resolve, 0))
             if (requestId !== quoteIndexRequestId) return
             quoteMatcher.buildIndex(loaded.id, loaded.bible)
+            // Hybrid re-ranker index (char n-grams). Phase 3.1 may swap in ONNX embeddings.
+            const embedVerses: { bookNumber: number; bookName: string; chapter: number; verse: number; text: string }[] = []
+            for (const book of loaded.bible.books || []) {
+                const bookNumber = book.number
+                const bookName = book.customName || book.name
+                if (!bookNumber || !bookName) continue
+                for (const chapter of book.chapters || []) {
+                    if (!chapter.number) continue
+                    for (const verse of chapter.verses || []) {
+                        if (!verse.number || !verse.text) continue
+                        embedVerses.push({ bookNumber, bookName, chapter: chapter.number, verse: verse.number, text: verse.text })
+                    }
+                }
+            }
+            quoteEmbedMatcher.buildIndex(loaded.id, embedVerses)
             console.log(`[STT] Quote index ready (${loaded.id}, ${quoteMatcher.getVerseCount()} verses)`)
             sttDebug(`quote_index ready id=${loaded.id} verses=${quoteMatcher.getVerseCount()}`)
         } catch (err) {
@@ -497,12 +516,26 @@ function tryQuoteMatch(transcript: string): BibleDetection | null {
         return null
     }
 
-    const result = quoteMatcher.match(transcript)
-    if (!result) return null
+    // Lexical first, then optional hybrid / embed re-rank when available.
+    const candidates = quoteMatcher.matchCandidates(transcript, 5)
+    if (!candidates.length) return null
+
+    let detection: BibleDetection | null = null
+    if (quoteEmbedMatcher.isReady()) {
+        detection = quoteEmbedMatcher.rerank(transcript, candidates)
+    }
+    if (!detection) {
+        // Fall back to lexical best (margin + cooldown inside match()).
+        const lexical = quoteMatcher.match(transcript)
+        if (!lexical) return null
+        detection = lexical.detection
+    } else {
+        quoteMatcher.markEmitted(detection.bookNumber, detection.chapter, detection.verseStart)
+    }
 
     // Warm reference context so "verse 17" / next / previous still work after a quote hit.
-    bibleDetector.adoptExternalDetection(result.detection)
-    return result.detection
+    bibleDetector.adoptExternalDetection(detection)
+    return detection
 }
 
 function flushPendingDetections(commit: boolean): void {
@@ -648,9 +681,10 @@ function handleTranscript(event: TranscriptEvent): void {
 function handleDetection(detection: BibleDetection): void {
     const settings = get(sttSettings)
 
-    // Skip low-confidence detections
-    if (detection.confidence < settings.confidenceThreshold) {
-        sttDebug(`${formatDetectionDebugLine(detection)} skipped=below_threshold min=${settings.confidenceThreshold}`)
+    // Skip low-confidence detections (quotations use a higher bar).
+    if (!passesConfidenceThreshold(detection, settings)) {
+        const min = confidenceThresholdForSource(detection.source, settings)
+        sttDebug(`${formatDetectionDebugLine(detection)} skipped=below_threshold min=${min}`)
         return
     }
 
@@ -738,12 +772,12 @@ function autoShowIfEnabled(detection: BibleDetection): void {
         sttDebug(`auto_show skipped reason=contextual_no_explicit_verse ${detection.bookName} ${detection.chapter}:${detection.verseStart}`)
         return
     }
-    // Quotation matches already passed a higher bar in QuoteMatcher; still respect auto-show toggle.
+    // Source-aware: quotations already cleared autoShowQuoteMinConfidence in handleDetection.
     if (settings.autoShowBible) {
         import("./sttScriptureHelper").then(({ showDetection }) => {
             showDetection(detection, settings.bibleVersionId || undefined)
         })
-        sttDebug(`auto_show projected ${detection.bookName} ${detection.chapter}:${detection.verseStart}`)
+        sttDebug(`auto_show projected ${detection.bookName} ${detection.chapter}:${detection.verseStart} source=${detection.source}`)
     } else {
         sttDebug(`auto_show skipped reason=disabled ${detection.bookName} ${detection.chapter}:${detection.verseStart}`)
     }

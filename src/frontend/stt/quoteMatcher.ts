@@ -204,6 +204,8 @@ interface IndexedVerse {
     bookName: string
     chapter: number
     verse: number
+    /** Plain verse text (markup stripped) for hybrid re-rank / n-grams. */
+    plainText: string
     /** Ordered significant words (stopwords removed). */
     words: string[]
 }
@@ -222,6 +224,20 @@ export interface QuoteMatchResult {
     overlap: number
     coverage: number
     weightedScore: number
+}
+
+/** Lexical candidate exposed for hybrid / embed re-rankers. */
+export interface QuoteLexicalCandidate {
+    bookNumber: number
+    bookName: string
+    chapter: number
+    verse: number
+    plainText: string
+    words: string[]
+    overlap: number
+    coverage: number
+    weightedScore: number
+    orderBonus: number
 }
 
 /**
@@ -285,7 +301,8 @@ export class QuoteMatcher {
                     const verseNumber = verse.number
                     if (!verseNumber) continue
 
-                    const words = significantWords(stripBibleMarkup(verse.text || ""))
+                    const plainText = stripBibleMarkup(verse.text || "")
+                    const words = significantWords(plainText)
                     if (words.length < 2) continue
 
                     const verseIndex = verses.length
@@ -294,6 +311,7 @@ export class QuoteMatcher {
                         bookName,
                         chapter: chapterNumber,
                         verse: verseNumber,
+                        plainText,
                         words
                     })
 
@@ -317,11 +335,65 @@ export class QuoteMatcher {
      * Returns one best match when thresholds clear, else null.
      */
     match(transcript: string, now = Date.now()): QuoteMatchResult | null {
-        if (!this.verses.length || !transcript?.trim()) return null
+        const ranked = this.rankCandidates(transcript)
+        if (!ranked.length) return null
+
+        const best = ranked[0]
+        const second = ranked[1]
+        if (second && best.weightedScore < second.weightedScore * SCORE_MARGIN) return null
+
+        // Common sermon words alone: require at least one mid-rarity term
+        const minIdfAmongMatched = Math.min(...best.matchedWords.map((w) => this.idf(w)))
+        if (minIdfAmongMatched < 1.35 && best.overlap < 4) return null
+
+        const key = `${best.bookNumber}-${best.chapter}-${best.verse}`
+        if (key === this.lastEmittedKey && now - this.lastEmittedAt < QUOTE_COOLDOWN_MS) return null
+
+        const confidence = confidenceFromScore(best.weightedScore, best.coverage, best.overlap)
+        const windowText = rollingWindow(transcript, WINDOW_WORDS)
+        const snippet = windowText.substring(0, 100)
+
+        this.lastEmittedKey = key
+        this.lastEmittedAt = now
+
+        return {
+            detection: {
+                id: uid(),
+                bookNumber: best.bookNumber,
+                bookName: best.bookName,
+                chapter: best.chapter,
+                verseStart: best.verse,
+                confidence,
+                source: "quotation",
+                transcriptSnippet: snippet,
+                detectedAt: now
+            },
+            overlap: best.overlap,
+            coverage: best.coverage,
+            weightedScore: best.weightedScore
+        }
+    }
+
+    /**
+     * Top lexical candidates for hybrid / embed re-rankers (no cooldown side effects).
+     * Applies overlap/coverage gates but not the runner-up margin or cooldown.
+     */
+    matchCandidates(transcript: string, limit = 5): QuoteLexicalCandidate[] {
+        return this.rankCandidates(transcript).slice(0, Math.max(1, limit))
+    }
+
+    /** Mark a verse as recently emitted (shared cooldown with match()). */
+    markEmitted(bookNumber: number, chapter: number, verse: number, now = Date.now()): void {
+        this.lastEmittedKey = `${bookNumber}-${chapter}-${verse}`
+        this.lastEmittedAt = now
+    }
+
+    private rankCandidates(transcript: string): Array<QuoteLexicalCandidate & { matchedWords: string[] }> {
+        if (!this.verses.length || !transcript?.trim()) return []
 
         const windowText = rollingWindow(transcript, WINDOW_WORDS)
         const queryWords = significantWords(windowText)
-        if (queryWords.length < MIN_QUERY_WORDS) return null
+        if (queryWords.length < MIN_QUERY_WORDS) return []
 
         const uniqueQuery = uniquePreserveOrder(queryWords)
         const scores = new Map<number, { weighted: number; matched: Set<string> }>()
@@ -343,7 +415,7 @@ export class QuoteMatcher {
             }
         }
 
-        if (!scores.size) return null
+        if (!scores.size) return []
 
         const ranked: CandidateScore[] = []
         for (const [verseIndex, entry] of scores) {
@@ -365,43 +437,25 @@ export class QuoteMatcher {
             })
         }
 
-        if (!ranked.length) return null
+        if (!ranked.length) return []
         ranked.sort((a, b) => b.weighted - a.weighted || b.overlap - a.overlap)
 
-        const best = ranked[0]
-        const second = ranked[1]
-        if (second && best.weighted < second.weighted * SCORE_MARGIN) return null
-
-        // Common sermon words alone: require at least one mid-rarity term
-        const minIdfAmongMatched = Math.min(...best.matchedWords.map((w) => this.idf(w)))
-        if (minIdfAmongMatched < 1.35 && best.overlap < 4) return null
-
-        const verse = this.verses[best.verseIndex]
-        const key = `${verse.bookNumber}-${verse.chapter}-${verse.verse}`
-        if (key === this.lastEmittedKey && now - this.lastEmittedAt < QUOTE_COOLDOWN_MS) return null
-
-        const confidence = confidenceFromScore(best.weighted, best.coverage, best.overlap)
-        const snippet = windowText.substring(0, 100)
-
-        this.lastEmittedKey = key
-        this.lastEmittedAt = now
-
-        return {
-            detection: {
-                id: uid(),
+        return ranked.map((c) => {
+            const verse = this.verses[c.verseIndex]
+            return {
                 bookNumber: verse.bookNumber,
                 bookName: verse.bookName,
                 chapter: verse.chapter,
-                verseStart: verse.verse,
-                confidence,
-                source: "quotation",
-                transcriptSnippet: snippet,
-                detectedAt: now
-            },
-            overlap: best.overlap,
-            coverage: best.coverage,
-            weightedScore: best.weighted
-        }
+                verse: verse.verse,
+                plainText: verse.plainText,
+                words: verse.words,
+                overlap: c.overlap,
+                coverage: c.coverage,
+                weightedScore: c.weighted,
+                orderBonus: c.orderBonus,
+                matchedWords: c.matchedWords
+            }
+        })
     }
 
     /** Reset cooldown / last-emitted tracking without dropping the index. */

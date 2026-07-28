@@ -7,25 +7,30 @@ import { sttSettings, type SttSettingsData } from "./sttStore"
 
 const STORAGE_KEY = "freeshow_stt_settings_v1"
 const DEBOUNCE_MS = 500
-/** Default / only supported streaming model. */
+/** Default streaming model (Nemotron remains the recommended default). */
 const DEFAULT_MODEL_ID = "nemotron-en-int8"
+/** Keep in sync with src/electron/stt/modelCatalog.ts */
+const KNOWN_MODEL_IDS = new Set(["nemotron-en-int8", "whisper-large-v3-turbo-int8"])
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 let installed = false
 
 function normalizeSavedSettings(parsed: Partial<SttSettingsData>): Partial<SttSettingsData> {
-    // Force Nemotron — remap any older/unknown model ids from prior settings backups
     const next: Partial<SttSettingsData> = { ...parsed }
-    if (typeof parsed.model !== "string" || parsed.model !== DEFAULT_MODEL_ID) {
+    // Remap unknown model ids; allow Whisper when user previously selected it.
+    if (typeof parsed.model !== "string" || !KNOWN_MODEL_IDS.has(parsed.model)) {
         next.model = DEFAULT_MODEL_ID
     }
-    // Older backups lack the quotation toggle — default ON
+    // Older backups lack the quotation toggle — default OFF (conservative)
     if (typeof parsed.matchQuotedVerseText !== "boolean") {
-        next.matchQuotedVerseText = true
+        next.matchQuotedVerseText = false
     }
     // Older backups lack debug logging — default ON for bible testing
     if (typeof parsed.debugLogging !== "boolean") {
         next.debugLogging = true
+    }
+    if (typeof parsed.autoShowQuoteMinConfidence !== "number" || Number.isNaN(parsed.autoShowQuoteMinConfidence)) {
+        next.autoShowQuoteMinConfidence = 0.9
     }
     return next
 }
