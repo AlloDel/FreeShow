@@ -72,7 +72,8 @@ export class SttEngine extends EventEmitter {
 
     /**
      * Create the recognizer + VAD and start accepting audio.
-     * @param hotwordsFile optional path to a sherpa hotwords file (bible reference vocab)
+     * @param hotwordsFile experimental/disabled — callers should pass null. NeMo
+     *   modified_beam_search aborts Electron (sherpa-onnx #3572); biasing stays quarantined.
      */
     start(paths: SherpaModelPaths, vadModelPath: string, hotwordsFile?: string | null): void {
         // Lazy require so the app still boots on platforms where the addon fails to load
@@ -80,12 +81,11 @@ export class SttEngine extends EventEmitter {
         const sherpa = require("sherpa-onnx-node")
 
         // Always greedy_search for NeMo/Nemotron streaming.
-        // modified_beam_search (needed for hotwordsFile) prints
+        // Hotword biasing is experimental/disabled: modified_beam_search prints
         // "Unsupported decoding method" and exits Electron with code 255 — it does
-        // NOT throw a JS exception, so try/catch cannot recover. Callers may still
-        // write bible-hotwords.txt for when sherpa-onnx #3572 lands.
+        // NOT throw a JS exception, so try/catch cannot recover.
         if (hotwordsFile) {
-            console.warn("[STT] Skipping bible hotwords — NeMo modified_beam_search kills the process; using greedy_search (sherpa-onnx #3572)")
+            console.warn("[STT] Ignoring hotwordsFile — biasing is quarantined (sherpa-onnx #3572); using greedy_search")
         }
         this.recognizer = new sherpa.OnlineRecognizer({
             featConfig: { sampleRate: SAMPLE_RATE, featureDim: 80 },

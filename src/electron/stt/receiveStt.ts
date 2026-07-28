@@ -1,18 +1,23 @@
 // ----- FreeShow STT — IPC Router -----
 // Handles all STT messages over the dedicated "STT" IPC channel.
 // Follows the same pattern as receiveAudio.ts.
+// ASR runs in a forked worker (sttWorkerHost); falls back to in-process on fork failure.
 
 import type { IpcMainEvent } from "electron"
 import type { SttMessage, SttStartPayload, TranscriptEvent } from "../../types/Stt"
 import { toApp } from "../index"
-import { ensureBibleHotwordsFile } from "./bibleHotwords"
-import { deleteModel, downloadModel, ensureVadModel, getActiveModelId, getModelPaths, getModels, setActiveModel } from "./modelManager"
+import { deleteModel, downloadModel, ensureVadModel, getActiveModelId, getModelKind, getModelPaths, getModels, getWhisperModelPaths, setActiveModel } from "./modelManager"
 import { appendSttDebugLog, getSttDebugLogPath } from "./sttDebugLog"
 import { SttEngine } from "./sttEngine"
+import { SttWorkerHost } from "./sttWorkerHost"
+import { WhisperOfflineEngine } from "./whisperOfflineEngine"
 
-let engine: SttEngine | null = null
+type SttRuntime = SttWorkerHost | SttEngine | WhisperOfflineEngine
+
+let runtime: SttRuntime | null = null
 /** Mirrors renderer `sttSettings.debugLogging` for main-originated session/error lines. */
 let debugLoggingEnabled = true
+let usingWorker = false
 
 function maybeDebug(message: string): void {
     if (!debugLoggingEnabled) return
@@ -74,14 +79,21 @@ export function receiveStt(_e: IpcMainEvent, msg: SttMessage): void {
 // --- Handlers ---
 
 async function startStt(payload: SttStartPayload): Promise<void> {
-    if (engine?.isRunning) {
+    if (runtime?.isRunning) {
         console.log("[STT] Already running")
         return
     }
 
     const modelId = payload?.modelId || getActiveModelId()
     debugLoggingEnabled = payload?.debugLogging !== false
-    const paths = getModelPaths(modelId)
+    const kind = getModelKind(modelId)
+    if (!kind) {
+        maybeDebug(`error unknown_model model=${modelId}`)
+        sendToApp("TRANSCRIPT", { type: "error", error: `Unknown model: ${modelId}` })
+        return
+    }
+
+    const paths = kind === "offline-whisper" ? getWhisperModelPaths(modelId) : getModelPaths(modelId)
     if (!paths) {
         maybeDebug(`error model_not_downloaded model=${modelId}`)
         sendToApp("TRANSCRIPT", { type: "error", error: `Model not downloaded: ${modelId}. Open settings to download it.` })
@@ -89,58 +101,77 @@ async function startStt(payload: SttStartPayload): Promise<void> {
     }
 
     try {
-        // Tear down any leftover engine before starting (toggle spam / failed prior start)
-        if (engine) {
+        teardownRuntime()
+
+        const vadModelPath = await ensureVadModel()
+
+        // Prefer forked worker so sherpa-onnx stays off the Electron main thread.
+        // Hotword biasing is experimental/disabled — never pass a hotwords file into start.
+        let host: SttWorkerHost | null = null
+        try {
+            host = new SttWorkerHost()
+            bindTranscript(host)
+            await host.start({ modelId, kind, paths, vadModelPath })
+            runtime = host
+            usingWorker = true
+            setActiveModel(modelId)
+            sendStatus()
+            sendDebugLogPath()
+            maybeDebug(`session start model=${modelId} kind=${kind} runtime=worker hotwords=disabled log=${getSttDebugLogPath()}`)
+            console.log(`[STT] Started worker with model: ${modelId} (${kind})`)
+            return
+        } catch (forkErr) {
+            console.warn("[STT] Worker fork failed; falling back to in-process engine:", forkErr)
+            maybeDebug(`warn worker_fork_failed "${forkErr instanceof Error ? forkErr.message : String(forkErr)}"`)
             try {
-                engine.stop()
+                host?.stop()
             } catch {
                 /* */
             }
-            engine = null
+            host = null
         }
 
-        const vadModelPath = await ensureVadModel()
-        const hotwordsFile = ensureBibleHotwordsFile()
-        engine = new SttEngine()
-        engine.on("transcript", (event: TranscriptEvent) => {
-            sendToApp("TRANSCRIPT", event)
-            // If the engine reported an error/disconnect and is no longer running, clear the
-            // module-level reference so status reports (e.g. modelLoaded) reflect reality.
-            if ((event.type === "error" || event.type === "disconnected") && engine && !engine.isRunning) engine = null
-            if (event.type === "error") maybeDebug(`error engine "${event.error || "unknown"}"`)
-        })
-        engine.start(paths, vadModelPath, hotwordsFile)
+        // In-process fallback (dev resilience)
+        const engine = kind === "offline-whisper" ? new WhisperOfflineEngine() : new SttEngine()
+        bindTranscript(engine)
+        // Quarantined: pass null — bible hotwords biasing is experimental/disabled.
+        engine.start(paths as any, vadModelPath, null)
+        runtime = engine
+        usingWorker = false
         setActiveModel(modelId)
         sendStatus()
         sendDebugLogPath()
-        const decoding = engine.isUsingHotwords ? "hotwords" : "greedy_fallback"
-        maybeDebug(`session start model=${modelId} decoding=${decoding} hotwordsFile=${hotwordsFile ? "yes" : "no"} log=${getSttDebugLogPath()}`)
-        console.log(`[STT] Started with model: ${modelId}`)
+        maybeDebug(`session start model=${modelId} kind=${kind} runtime=in-process hotwords=disabled log=${getSttDebugLogPath()}`)
+        console.log(`[STT] Started in-process with model: ${modelId} (${kind})`)
     } catch (err) {
         console.error("[STT] Failed to start:", err)
         maybeDebug(`error start_failed "${err instanceof Error ? err.message : String(err)}"`)
-        if (engine) {
-            try {
-                engine.stop()
-            } catch {
-                /* */
-            }
-        }
-        engine = null
+        teardownRuntime()
         sendToApp("TRANSCRIPT", { type: "error", error: err instanceof Error ? err.message : String(err) })
     }
 }
 
-function stopStt(): void {
-    if (engine) {
-        try {
-            engine.stop()
-        } catch (err) {
-            console.error("[STT] Error during stop:", err)
-            maybeDebug(`error stop_failed "${err instanceof Error ? err.message : String(err)}"`)
-        }
-        engine = null
+function bindTranscript(target: SttRuntime): void {
+    target.on("transcript", (event: TranscriptEvent) => {
+        sendToApp("TRANSCRIPT", event)
+        if ((event.type === "error" || event.type === "disconnected") && runtime && !runtime.isRunning) runtime = null
+        if (event.type === "error") maybeDebug(`error engine "${event.error || "unknown"}"`)
+    })
+}
+
+function teardownRuntime(): void {
+    if (!runtime) return
+    try {
+        runtime.stop()
+    } catch {
+        /* */
     }
+    runtime = null
+    usingWorker = false
+}
+
+function stopStt(): void {
+    teardownRuntime()
     sendStatus()
     const logPath = getSttDebugLogPath()
     maybeDebug(`session stop log=${logPath}`)
@@ -171,7 +202,7 @@ function sendDebugLogPath(): void {
 }
 
 function handleAudioData(data: any): void {
-    if (!engine?.isRunning) return
+    if (!runtime?.isRunning) return
 
     let samples: Float32Array
     if (data instanceof Float32Array) {
@@ -191,7 +222,7 @@ function handleAudioData(data: any): void {
         return
     }
 
-    engine.pushAudio(samples)
+    runtime.pushAudio(samples)
 }
 
 async function handleDownloadModel(data: { modelId: string }): Promise<void> {
@@ -222,13 +253,14 @@ function sendToApp(channel: string, data: any): void {
 
 function getStatusData() {
     return {
-        enabled: engine?.isRunning || false,
-        connected: engine?.isRunning || false,
-        modelLoaded: !!engine,
+        enabled: runtime?.isRunning || false,
+        connected: runtime?.isRunning || false,
+        modelLoaded: !!runtime,
         modelName: getActiveModelId(),
         isDownloading: false,
         downloadProgress: 0,
-        downloadTotal: 0
+        downloadTotal: 0,
+        runtime: usingWorker ? "worker" : runtime ? "in-process" : "none"
     }
 }
 

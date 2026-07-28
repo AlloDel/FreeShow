@@ -1,5 +1,5 @@
 // ----- FreeShow STT — Model Manager -----
-// Downloads and manages sherpa-onnx streaming ASR models.
+// Downloads and manages sherpa-onnx ASR models (streaming transducer + optional Whisper).
 // Models are stored in userData/stt-models/<modelId>/ — never committed to the repo.
 
 import { app } from "electron"
@@ -7,51 +7,26 @@ import fs from "fs"
 import https from "https"
 import path from "path"
 import type { ModelInfo } from "../../types/Stt"
+import {
+    DEFAULT_STT_MODEL_ID,
+    getCatalogEntry,
+    getModelKind,
+    requiredModelFileNames,
+    STT_MODEL_CATALOG,
+    type SherpaModelPaths,
+    type WhisperModelPaths
+} from "./modelCatalog"
 
-export interface SherpaModelPaths {
-    encoder: string
-    decoder: string
-    joiner: string
-    tokens: string
-}
+export type { SherpaModelPaths, WhisperModelPaths }
+export { getModelKind, DEFAULT_STT_MODEL_ID }
 
-interface SttModelDef extends Omit<ModelInfo, "downloaded" | "active"> {
-    baseUrl: string
-    files: { encoder: string; decoder: string; joiner: string; tokens: string }
-}
-
-/**
- * Primary ASR model: NVIDIA Nemotron 0.6B streaming transducer (int8).
- * Model id: nemotron-en-int8
- * HF: csukuangfj/sherpa-onnx-nemotron-speech-streaming-en-0.6b-int8-2026-01-14
- */
-const MODELS: SttModelDef[] = [
-    {
-        id: "nemotron-en-int8",
-        displayName: "NVIDIA Nemotron (English)",
-        size: 661_920_000,
-        description: "NVIDIA Nemotron 0.6B streaming transducer — high accuracy for Bible references (~662 MB)",
-        baseUrl: "https://huggingface.co/csukuangfj/sherpa-onnx-nemotron-speech-streaming-en-0.6b-int8-2026-01-14/resolve/main",
-        files: {
-            encoder: "encoder.int8.onnx",
-            decoder: "decoder.int8.onnx",
-            joiner: "joiner.int8.onnx",
-            tokens: "tokens.txt"
-        }
-    }
-]
-
-/** Default and only catalogued model. */
-let activeModelId: string = "nemotron-en-int8"
+/** Default catalogued model (streaming Nemotron). */
+let activeModelId: string = DEFAULT_STT_MODEL_ID
 
 function getModelsDir(): string {
     const dir = path.join(app.getPath("userData"), "stt-models")
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
     return dir
-}
-
-function getModelDef(modelId: string): SttModelDef | null {
-    return MODELS.find((m) => m.id === modelId) || null
 }
 
 // --- Silero VAD model (speech gating; tiny, shared by all ASR models) ---
@@ -76,16 +51,18 @@ export async function ensureVadModel(): Promise<string> {
 }
 
 function isModelDownloaded(modelId: string): boolean {
+    const kind = getModelKind(modelId)
+    if (kind === "offline-whisper") return getWhisperModelPaths(modelId) !== null
     return getModelPaths(modelId) !== null
 }
 
-/** Absolute paths to all model files, or null if any file is missing/empty. */
+/** Absolute paths for a streaming transducer model, or null if incomplete. */
 export function getModelPaths(modelId: string): SherpaModelPaths | null {
-    const def = getModelDef(modelId)
-    if (!def) return null
+    const def = getCatalogEntry(modelId)
+    if (!def || def.kind !== "streaming-transducer" || !def.files.joiner) return null
 
     const dir = path.join(getModelsDir(), def.id)
-    const paths = {
+    const paths: SherpaModelPaths = {
         encoder: path.join(dir, def.files.encoder),
         decoder: path.join(dir, def.files.decoder),
         joiner: path.join(dir, def.files.joiner),
@@ -98,8 +75,26 @@ export function getModelPaths(modelId: string): SherpaModelPaths | null {
     return paths
 }
 
+/** Absolute paths for an offline Whisper model, or null if incomplete. */
+export function getWhisperModelPaths(modelId: string): WhisperModelPaths | null {
+    const def = getCatalogEntry(modelId)
+    if (!def || def.kind !== "offline-whisper") return null
+
+    const dir = path.join(getModelsDir(), def.id)
+    const paths: WhisperModelPaths = {
+        encoder: path.join(dir, def.files.encoder),
+        decoder: path.join(dir, def.files.decoder),
+        tokens: path.join(dir, def.files.tokens)
+    }
+
+    for (const p of Object.values(paths)) {
+        if (!fs.existsSync(p) || fs.statSync(p).size === 0) return null
+    }
+    return paths
+}
+
 export function getModels(): ModelInfo[] {
-    return MODELS.map(({ baseUrl, files, ...info }) => ({
+    return STT_MODEL_CATALOG.map(({ baseUrl: _baseUrl, files: _files, ...info }) => ({
         ...info,
         downloaded: isModelDownloaded(info.id),
         active: info.id === activeModelId
@@ -117,7 +112,7 @@ export function getActiveModelId(): string {
 }
 
 export function deleteModel(modelId: string): void {
-    const def = getModelDef(modelId)
+    const def = getCatalogEntry(modelId)
     if (!def) return
     const dir = path.join(getModelsDir(), def.id)
     if (fs.existsSync(dir)) {
@@ -132,15 +127,16 @@ export function deleteModel(modelId: string): void {
 
 /** Download all files of a model with aggregate progress reporting. */
 export async function downloadModel(modelId: string, onProgress?: (downloaded: number, total: number) => void): Promise<void> {
-    const def = getModelDef(modelId)
+    const def = getCatalogEntry(modelId)
     if (!def) throw new Error(`Unknown model: ${modelId}`)
     if (isModelDownloaded(modelId)) return
 
     const dir = path.join(getModelsDir(), def.id)
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
 
+    const fileNames = requiredModelFileNames(def)
     let downloadedSoFar = 0
-    for (const fileName of Object.values(def.files)) {
+    for (const fileName of fileNames) {
         const target = path.join(dir, fileName)
         const fileBase = downloadedSoFar
         await downloadFile(`${def.baseUrl}/${fileName}`, target, (bytes) => {
