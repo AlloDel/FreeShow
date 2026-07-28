@@ -16,6 +16,12 @@ const bibleDetector = new BibleDetector()
 /** Quote-by-content matcher (spoken verse text vs active translation) — progressive on partials. */
 const quoteMatcher = new QuoteMatcher()
 
+// Bare "next"/"previous"/"back" auto-fire when the merge window expires (non-blocking listen).
+bibleDetector.setPendingAutoResolveHandler((detections) => {
+    flushDetectorDebug()
+    detections.forEach((d) => handleDetection(d))
+})
+
 let quoteIndexPromise: Promise<void> | null = null
 let quoteIndexRequestId = 0
 let quoteIndexWatchedVersion = ""
@@ -341,6 +347,8 @@ let lastDetectorInput = ""
 const pendingDetections = new Map<string, { detection: BibleDetection; timer: ReturnType<typeof setTimeout> }>()
 /** Detections already committed during the current utterance — a differing final must not re-commit them. */
 const utteranceCommittedKeys = new Set<string>()
+/** Bumped on each transcript event so deferred partial detection cannot run after a newer final. */
+let transcriptGeneration = 0
 
 function detectionKey(d: BibleDetection): string {
     return `${d.bookNumber}-${d.chapter}-${d.verseStart}-${d.verseEnd || 0}`
@@ -389,8 +397,9 @@ function processPartialDetections(transcript: string): void {
     referenceHits.forEach((detection) => scheduleDetection(detection))
 
     // Ensemble: reference path wins when both could fire for this window.
-    // Quotation is a parallel candidate source for quote-without-citation speech.
-    if (!referenceHits.length) {
+    // Skip quote matching on short command/book fragments — avoids main-thread work that
+    // stalls overlay partials after trigger words.
+    if (!referenceHits.length && !isIncompleteCommandCandidate(transcript) && wordCount(transcript) >= 3) {
         const quoteHit = tryQuoteMatch(transcript)
         if (quoteHit) scheduleDetection(quoteHit)
     }
@@ -426,6 +435,13 @@ function isIncompleteCommandCandidate(text: string): boolean {
     return /^(?:next|previous|back|go back|(?:the\s+)?(?:versus|verses|verse|vs|v)\.?)$/.test(whole)
 }
 
+function wordCount(text: string): number {
+    return text
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean).length
+}
+
 /** Ensure the quotation inverted index matches the active STT Bible version. */
 async function ensureQuoteIndex(force = false): Promise<void> {
     const settings = get(sttSettings)
@@ -447,6 +463,9 @@ async function ensureQuoteIndex(force = false): Promise<void> {
                 return
             }
             if (!force && quoteMatcher.isReady(loaded.id)) return
+            // Yield so overlay partials can paint before the sync full-Bible index build.
+            await new Promise<void>((resolve) => setTimeout(resolve, 0))
+            if (requestId !== quoteIndexRequestId) return
             quoteMatcher.buildIndex(loaded.id, loaded.bible)
             console.log(`[STT] Quote index ready (${loaded.id}, ${quoteMatcher.getVerseCount()} verses)`)
             sttDebug(`quote_index ready id=${loaded.id} verses=${quoteMatcher.getVerseCount()}`)
@@ -494,12 +513,21 @@ function handleTranscript(event: TranscriptEvent): void {
     switch (event.type) {
         case "partial":
             if (event.transcript) {
+                // Always update the overlay first — pending-command merge must never freeze the UI.
                 sttPartialTranscript.set(event.transcript)
                 sttDebugPartial(event.transcript)
-                processPartialDetections(event.transcript)
+                const gen = ++transcriptGeneration
+                const text = event.transcript
+                // Defer detection so the partial can paint before fuzzy/quote work.
+                queueMicrotask(() => {
+                    if (gen !== transcriptGeneration) return
+                    processPartialDetections(text)
+                })
             }
             break
         case "final":
+            // Invalidate any deferred partial work from this utterance.
+            transcriptGeneration++
             if (event.transcript) {
                 sttTranscript.set(event.transcript)
                 sttPartialTranscript.set("")
@@ -543,6 +571,7 @@ function handleTranscript(event: TranscriptEvent): void {
             void ensureQuoteIndex()
             break
         case "disconnected":
+            transcriptGeneration++
             flushPendingDetections(false)
             endUtterance()
             bibleDetector.reset()
@@ -553,6 +582,7 @@ function handleTranscript(event: TranscriptEvent): void {
         case "error":
             console.error("[STT] Engine error:", event.error)
             sttDebug(`error engine "${event.error || "unknown"}"`)
+            transcriptGeneration++
             flushPendingDetections(false)
             endUtterance()
             bibleDetector.reset()

@@ -16,8 +16,9 @@
 // Defaults tuned for short spoken Bible commands ("next verse", "verse 12"):
 // hold the utterance open long enough that a brief pause between words does not
 // split them into separate finals (Sherpa Silero examples use ~0.5 s silence;
-// we use a bit more). Tradeoff: continuous sermon speech gets slightly later
-// finals; detections still de-dupe across partial/final.
+// we use ~0.52 s). Tradeoff: continuous sermon speech gets slightly later
+// finals; detections still de-dupe across partial/final. Partials stream
+// continuously during the silence wait so the overlay never freezes.
 
 import { EventEmitter } from "events"
 import type { TranscriptEvent } from "../../types/Stt"
@@ -33,9 +34,10 @@ const FINALIZE_PAD_SAMPLES = 6400
  * VAD closes an utterance after this much trailing silence (seconds).
  * 0.35 was too aggressive — brief pauses between "next"/"verse" or "verse"/digit
  * produced separate finals with the trailing word dropped. Sherpa Silero examples
- * use 0.5; 0.7 keeps short command phrases in one segment without feeling sluggish.
+ * use 0.5; 0.7 felt frozen on slow speech. 0.52 balances split-phrase recovery
+ * with responsive finals while partials keep streaming during the wait.
  */
-const VAD_MIN_SILENCE = 0.7
+const VAD_MIN_SILENCE = 0.52
 /** Force-close long utterances so finals keep flowing during continuous speech (seconds). */
 const VAD_MAX_SPEECH = 12
 /**
