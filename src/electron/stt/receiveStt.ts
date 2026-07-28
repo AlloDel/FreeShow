@@ -163,7 +163,11 @@ function handleDebugLog(data: { line?: string; message?: string } | string): voi
 }
 
 function sendDebugLogPath(): void {
-    sendToApp("DEBUG_LOG_PATH", { path: getSttDebugLogPath() })
+    try {
+        sendToApp("DEBUG_LOG_PATH", { path: getSttDebugLogPath() })
+    } catch (err) {
+        console.warn("[STT] Failed to send debug log path:", err)
+    }
 }
 
 function handleAudioData(data: any): void {

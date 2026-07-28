@@ -5,8 +5,9 @@
 // Do NOT include verse text content — that encourages hallucinations.
 //
 // Hotwords require decodingMethod=modified_beam_search (see sherpa-onnx docs).
-// Nemotron streaming currently rejects modified_beam_search and falls back to greedy
-// (sherpa-onnx #3572) — keep this file wired so biasing works when sherpa supports it.
+// NeMo/Nemotron does NOT throw on that method — it aborts the whole Electron process
+// (exit 255). sttEngine therefore skips enabling hotwords and stays on greedy_search
+// until sherpa-onnx #3572. Keep writing this file so biasing can be re-enabled later.
 // Score is kept moderate so silence/crowd noise does not invent book names.
 
 import fs from "fs"

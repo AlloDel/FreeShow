@@ -20,7 +20,6 @@
 import { EventEmitter } from "events"
 import type { TranscriptEvent } from "../../types/Stt"
 import type { SherpaModelPaths } from "./modelManager"
-import { BIBLE_HOTWORDS_MAX_ACTIVE_PATHS, BIBLE_HOTWORDS_SCORE } from "./bibleHotwords"
 
 const SAMPLE_RATE = 16000
 
@@ -70,46 +69,28 @@ export class SttEngine extends EventEmitter {
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         const sherpa = require("sherpa-onnx-node")
 
-        const makeRecognizer = (withHotwords: boolean) => {
-            const config: Record<string, unknown> = {
-                featConfig: { sampleRate: SAMPLE_RATE, featureDim: 80 },
-                modelConfig: {
-                    transducer: { encoder: paths.encoder, decoder: paths.decoder, joiner: paths.joiner },
-                    tokens: paths.tokens,
-                    numThreads: 2,
-                    provider: "cpu",
-                    debug: 0
-                },
-                // Endpointing is handled by the VAD gate — see the header comment
-                enableEndpoint: false
-            }
-
-            if (withHotwords && hotwordsFile) {
-                // Hotwords require modified_beam_search (greedy ignores hotwordsFile).
-                // Nemotron streaming currently rejects this and falls back below (sherpa #3572).
-                // Modest beam width keeps realtime CPU cost close to greedy for short refs.
-                config.decodingMethod = "modified_beam_search"
-                config.maxActivePaths = BIBLE_HOTWORDS_MAX_ACTIVE_PATHS
-                config.hotwordsFile = hotwordsFile
-                config.hotwordsScore = BIBLE_HOTWORDS_SCORE
-            } else {
-                config.decodingMethod = "greedy_search"
-            }
-
-            return new sherpa.OnlineRecognizer(config)
+        // Always greedy_search for NeMo/Nemotron streaming.
+        // modified_beam_search (needed for hotwordsFile) prints
+        // "Unsupported decoding method" and exits Electron with code 255 — it does
+        // NOT throw a JS exception, so try/catch cannot recover. Callers may still
+        // write bible-hotwords.txt for when sherpa-onnx #3572 lands.
+        if (hotwordsFile) {
+            console.warn("[STT] Skipping bible hotwords — NeMo modified_beam_search kills the process; using greedy_search (sherpa-onnx #3572)")
         }
-
-        // Attempt hotword-biased decoding; fall back to greedy if the model rejects the config
-        // (Nemotron streaming has no effective biasing until sherpa-onnx #3572).
-        try {
-            this.recognizer = makeRecognizer(!!hotwordsFile)
-            this.usingHotwords = !!hotwordsFile
-            if (this.usingHotwords) console.log("[STT] Bible hotwords requested (effective only if modified_beam_search is supported)")
-        } catch (err) {
-            console.warn("[STT] Hotwords recognizer failed, falling back to greedy_search:", err)
-            this.recognizer = makeRecognizer(false)
-            this.usingHotwords = false
-        }
+        this.recognizer = new sherpa.OnlineRecognizer({
+            featConfig: { sampleRate: SAMPLE_RATE, featureDim: 80 },
+            modelConfig: {
+                transducer: { encoder: paths.encoder, decoder: paths.decoder, joiner: paths.joiner },
+                tokens: paths.tokens,
+                numThreads: 2,
+                provider: "cpu",
+                debug: 0
+            },
+            // Endpointing is handled by the VAD gate — see the header comment
+            enableEndpoint: false,
+            decodingMethod: "greedy_search"
+        })
+        this.usingHotwords = false
 
         this.vad = new sherpa.Vad(
             {

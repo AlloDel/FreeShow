@@ -18,10 +18,10 @@ is downloaded, no cloud API keys).
 - Utterance segmentation uses **Silero VAD** (speech gate) with a fresh recognizer stream
   per utterance. Defaults are tuned for short spoken Bible references (tighter silence
   window, higher speech threshold, idle RMS gate).
-- **Bible reference hotwords** (`bibleHotwords.ts`) are attempted via `modified_beam_search`
-  and fall back to `greedy_search` when the model rejects that config. Nemotron streaming
-  currently has no effective contextual biasing (sherpa-onnx [#3572](https://github.com/k2-fsa/sherpa-onnx/issues/3572));
-  product accuracy for auto-verse comes from the frontend post-ASR `bibleDetector`.
+- **Bible reference hotwords** (`bibleHotwords.ts`) are written but **not enabled** at runtime.
+  NeMo `modified_beam_search` aborts Electron (exit 255) instead of throwing — the engine stays on
+  `greedy_search` until sherpa-onnx [#3572](https://github.com/k2-fsa/sherpa-onnx/issues/3572).
+  Product accuracy for auto-verse comes from the frontend post-ASR `bibleDetector`.
   Wiring is kept so biasing can turn on when sherpa supports it.
 - The addon (`sherpa-onnx-node`) is `require()`-d lazily inside `start()` so the app still boots
   on platforms/architectures where the native addon fails to load; a failure surfaces as an

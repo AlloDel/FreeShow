@@ -3,13 +3,24 @@
 
 import { app } from "electron"
 import fs from "fs"
+import os from "os"
 import path from "path"
 
 const LOG_FILENAME = "stt-debug.log"
 
-/** Absolute path of the STT debug log under Electron userData. */
+/** Absolute path of the STT debug log under Electron userData (tmpdir fallback). */
 export function getSttDebugLogPath(): string {
-    return path.join(app.getPath("userData"), LOG_FILENAME)
+    try {
+        if (app?.isReady?.()) return path.join(app.getPath("userData"), LOG_FILENAME)
+    } catch {
+        // app.getPath can throw before ready / in odd test environments
+    }
+    try {
+        if (typeof app?.getPath === "function") return path.join(app.getPath("userData"), LOG_FILENAME)
+    } catch {
+        // fall through
+    }
+    return path.join(os.tmpdir(), LOG_FILENAME)
 }
 
 /**
@@ -20,11 +31,11 @@ export function formatSttDebugLine(message: string, now: Date = new Date()): str
     return `${now.toISOString()} [STT:debug] ${message}`
 }
 
-/** Append one line to the debug log and mirror to console. */
+/** Append one line to the debug log and mirror to console. Never throws. */
 export function appendSttDebugLog(messageOrLine: string): void {
-    const line = messageOrLine.includes("[STT:debug]") ? messageOrLine.trimEnd() : formatSttDebugLine(messageOrLine)
-    console.log(line)
     try {
+        const line = messageOrLine.includes("[STT:debug]") ? messageOrLine.trimEnd() : formatSttDebugLine(messageOrLine)
+        console.log(line)
         fs.appendFileSync(getSttDebugLogPath(), line + "\n", "utf8")
     } catch (err) {
         console.warn("[STT] Failed to write stt-debug.log:", err)
