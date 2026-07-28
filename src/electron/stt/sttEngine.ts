@@ -13,9 +13,11 @@
 // the partials, so finals cost no extra decode work.
 // NOTE: Electron forbids external ArrayBuffers — vad.front(false) is required.
 //
-// Defaults are tuned for short spoken Bible references: tighter VAD silence window,
-// higher speech threshold, idle RMS gate. Tradeoff: continuous speech without pauses
-// may get more mid-sentence finals; detections still de-dupe across partial/final.
+// Defaults tuned for short spoken Bible commands ("next verse", "verse 12"):
+// hold the utterance open long enough that a brief pause between words does not
+// split them into separate finals (Sherpa Silero examples use ~0.5 s silence;
+// we use a bit more). Tradeoff: continuous sermon speech gets slightly later
+// finals; detections still de-dupe across partial/final.
 
 import { EventEmitter } from "events"
 import type { TranscriptEvent } from "../../types/Stt"
@@ -25,16 +27,20 @@ const SAMPLE_RATE = 16000
 
 /** Audio kept from just before VAD triggers, fed to the live stream (~0.4 s). */
 const PREROLL_MAX_SAMPLES = 6400
-/** Silence padding fed before finalizing so the decoder flushes trailing tokens (~0.35 s). */
-const FINALIZE_PAD_SAMPLES = 5600
-/** VAD closes an utterance after this much trailing silence (seconds). */
-const VAD_MIN_SILENCE = 0.35
+/** Silence padding fed before finalizing so the decoder flushes trailing tokens (~0.4 s). */
+const FINALIZE_PAD_SAMPLES = 6400
+/**
+ * VAD closes an utterance after this much trailing silence (seconds).
+ * 0.35 was too aggressive — brief pauses between "next"/"verse" or "verse"/digit
+ * produced separate finals with the trailing word dropped. Sherpa Silero examples
+ * use 0.5; 0.7 keeps short command phrases in one segment without feeling sluggish.
+ */
+const VAD_MIN_SILENCE = 0.7
 /** Force-close long utterances so finals keep flowing during continuous speech (seconds). */
 const VAD_MAX_SPEECH = 12
 /**
- * Silero speech probability threshold. Slightly above the default 0.5 so room
- * noise / crowd murmur is less likely to open an utterance, but low enough that
- * short tokens ("four", "next", "NIV") still open after a pause.
+ * Silero speech probability threshold. Default 0.5 — low enough that short tokens
+ * ("four", "next", "NIV", trailing digits) still open/continue after a pause.
  */
 const VAD_THRESHOLD = 0.5
 /** Minimum speech duration before VAD opens (seconds). Short so "4" / "next" count. */

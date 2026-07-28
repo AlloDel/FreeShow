@@ -101,6 +101,20 @@ const MAX_VERSE = 176
 /** How long a spoken book+chapter context stays warm for follow-up verse mentions. */
 const CONTEXT_TIMEOUT_MS = 60_000
 
+/**
+ * How long an incomplete command fragment ("next", "verse", …) waits for the
+ * rest of the phrase when VAD/ASR splits one spoken command into multiple finals.
+ */
+const PENDING_COMMAND_TTL_MS = 2500
+
+type PendingCommandKind = "next" | "previous" | "back" | "verse"
+
+interface PendingCommand {
+    kind: PendingCommandKind
+    setAt: number
+    raw: string
+}
+
 interface ActiveContext {
     bookNumber: number
     bookName: string
@@ -140,6 +154,13 @@ export class BibleDetector {
     private recentDetections: BibleDetection[] = []
     /** Book name heard alone — wait for a following chapter/verse utterance. */
     private pendingBook: PendingBook | null = null
+    /**
+     * Incomplete voice-command fragment from a prior final ("next", "verse", …).
+     * Merged with the next final within PENDING_COMMAND_TTL_MS when VAD splits phrases.
+     */
+    private pendingCommand: PendingCommand | null = null
+    /** Debug lines for stt-debug.log (drained by the manager after each process). */
+    private debugEvents: string[] = []
 
     /**
      * Process a transcript and return any Bible references found.
@@ -148,15 +169,24 @@ export class BibleDetector {
      * (next/previous verse, next/previous chapter).
      *
      * @param options.isFinal - When false (streaming partials), bare "next"/"back"
-     *   are ignored so "next chapter" is not stolen by a premature next-verse jump.
+     *   are held as incomplete (not next-verse) so "next chapter" is not stolen.
+     *   Incomplete finals set pendingCommand and merge with the following final.
      */
     processTranscript(text: string, options?: { isFinal?: boolean }): BibleDetection[] {
         if (!text) return []
         const isFinal = options?.isFinal !== false
         const cleaned = this.cleanTranscript(text)
 
-        const next = this.checkNextVerseCommand(cleaned, isFinal)
+        // VAD often emits "next" then "verse" as separate finals — merge first.
+        const fromPending = this.tryCompletePendingCommand(cleaned, isFinal)
+        if (fromPending) return fromPending
+
+        // Incomplete command fragment on a final — wait for the rest of the phrase.
+        if (isFinal && this.notePendingCommand(cleaned)) return []
+
+        const next = this.checkNextVerseCommand(cleaned)
         if (next) {
+            this.clearPendingCommand("flushed")
             this.pendingBook = null
             this.setContext(next, false)
             this.pushRecent(next)
@@ -167,6 +197,7 @@ export class BibleDetector {
         if (previous) {
             // Re-firing the last detection means the speaker is still talking about it —
             // refresh the context window so a subsequent bare verse mention still resolves.
+            this.clearPendingCommand("flushed")
             this.pendingBook = null
             this.setContext(previous, false)
             return [previous]
@@ -174,6 +205,7 @@ export class BibleDetector {
 
         const nextChapter = this.checkNextChapterCommand(cleaned)
         if (nextChapter) {
+            this.clearPendingCommand("flushed")
             this.pendingBook = null
             // allowBareVerse so a following "verse N" / bare "4" / "next verse" resolves immediately
             this.setContext(nextChapter, true)
@@ -183,6 +215,7 @@ export class BibleDetector {
 
         const previousChapter = this.checkPreviousChapterCommand(cleaned)
         if (previousChapter) {
+            this.clearPendingCommand("flushed")
             this.pendingBook = null
             this.setContext(previousChapter, true)
             this.pushRecent(previousChapter)
@@ -194,6 +227,7 @@ export class BibleDetector {
 
         const direct = this.detectDirect(cleaned)
         if (direct.length) {
+            this.clearPendingCommand("flushed")
             this.pendingBook = null
             return direct
         }
@@ -204,6 +238,15 @@ export class BibleDetector {
 
         const contextual = this.detectContextual(cleaned)
         return contextual ? [contextual] : []
+    }
+
+    /**
+     * Drain debug events produced since the last call (for stt-debug.log).
+     */
+    takeDebugEvents(): string[] {
+        const events = this.debugEvents
+        this.debugEvents = []
+        return events
     }
 
     /**
@@ -220,6 +263,8 @@ export class BibleDetector {
         this.context = null
         this.recentDetections = []
         this.pendingBook = null
+        this.pendingCommand = null
+        this.debugEvents = []
     }
 
     /**
@@ -228,6 +273,7 @@ export class BibleDetector {
      */
     adoptExternalDetection(detection: BibleDetection): void {
         this.pendingBook = null
+        this.clearPendingCommand("flushed")
         this.setContext(detection, false)
         this.pushRecent(detection)
     }
@@ -653,7 +699,7 @@ export class BibleDetector {
         return null
     }
 
-    private checkNextVerseCommand(text: string, allowBareNext: boolean): BibleDetection | null {
+    private checkNextVerseCommand(text: string): BibleDetection | null {
         const lower = text.toLowerCase()
         const whole = lower.replace(/[.,!?;:]/g, "").trim()
         const front = this.recentDetections[0]
@@ -663,21 +709,14 @@ export class BibleDetector {
         // this returns null, so exclude any utterance that mentions chapter.
         if (/\bchapter\b/.test(whole)) return null
 
-        // Bare single-word commands only count as the WHOLE utterance on finals
-        // (partials often start with "next" before "chapter"/"verse" arrives)
-        const isNext = NEXT_VERSE_PHRASES.some((phrase) => lower.includes(phrase)) || (allowBareNext && whole === "next")
-        const isBack = allowBareNext && (whole === "back" || whole === "previous" || whole === "go back")
+        // Full phrases only. Bare "next"/"back"/"previous" are held as pendingCommand
+        // on finals (VAD often splits "next verse") — see notePendingCommand.
+        const isNext = NEXT_VERSE_PHRASES.some((phrase) => lower.includes(phrase))
 
         if (isNext) {
             const nextVerse = (front.verseEnd || front.verseStart) + 1
             if (nextVerse > MAX_VERSE) return null
             return this.makeDetection(front.bookNumber, front.bookName, front.chapter, nextVerse, undefined, 0.95, text, "contextual")
-        }
-
-        if (isBack) {
-            const previousVerse = front.verseStart - 1
-            if (previousVerse < 1) return null
-            return this.makeDetection(front.bookNumber, front.bookName, front.chapter, previousVerse, undefined, 0.95, text, "contextual")
         }
 
         return null
@@ -770,6 +809,7 @@ export class BibleDetector {
     /**
      * Whole-utterance verse cue with no number ("verse", "vs", "versus").
      * Refreshes warm context so a following "4" / "four" completes the reference.
+     * (Finals also go through notePendingCommand for sticky cross-final merge.)
      */
     private notePendingVerseCue(cleaned: string): boolean {
         const whole = cleaned
@@ -782,8 +822,214 @@ export class BibleDetector {
         this.context!.pendingVerseCue = true
         this.context!.allowBareVerse = true
         this.context!.setAt = Date.now()
-        console.log(`[STT] Verse cue without number ("${whole}") — waiting for verse number`)
+        if (!this.pendingCommand) this.setPendingCommand("verse", whole)
+        else console.log(`[STT] Verse cue without number ("${whole}") — waiting for verse number`)
         return true
+    }
+
+    /**
+     * Incomplete command fragment as the whole final ("next", "previous", "back", "verse").
+     * Do not treat as a complete next-verse / clear — wait for the rest within TTL.
+     */
+    private notePendingCommand(cleaned: string): boolean {
+        const whole = cleaned
+            .toLowerCase()
+            .replace(/[.,!?;:]/g, "")
+            .trim()
+
+        let kind: PendingCommandKind | null = null
+        if (whole === "next") kind = "next"
+        else if (whole === "previous") kind = "previous"
+        else if (whole === "back" || whole === "go back") kind = "back"
+        else if (new RegExp(`^(?:the\\s+)?${VERSE_CUE}\\.?$`).test(whole)) kind = "verse"
+
+        if (!kind) return false
+
+        // Verse cue without warm context cannot complete a verse jump later
+        if (kind === "verse" && !this.isContextLive()) return false
+        // Navigation commands need history
+        if ((kind === "next" || kind === "previous" || kind === "back") && !this.recentDetections.length) return false
+
+        this.setPendingCommand(kind, whole)
+        if (kind === "verse" && this.context) {
+            this.context.pendingVerseCue = true
+            this.context.allowBareVerse = true
+            this.context.setAt = Date.now()
+        }
+        return true
+    }
+
+    private setPendingCommand(kind: PendingCommandKind, raw: string): void {
+        this.pendingCommand = { kind, setAt: Date.now(), raw }
+        this.pushDebug(`pending_command set kind=${kind} raw="${raw}"`)
+        console.log(`[STT] Incomplete command pending: "${raw}" (kind=${kind}) — waiting for continuation`)
+    }
+
+    private clearPendingCommand(reason: "completed" | "flushed" | "expired"): void {
+        if (!this.pendingCommand) return
+        const { kind, raw } = this.pendingCommand
+        this.pendingCommand = null
+        this.pushDebug(`pending_command ${reason} kind=${kind} raw="${raw}"`)
+        console.log(`[STT] Pending command ${reason}: "${raw}" (kind=${kind})`)
+    }
+
+    private pushDebug(message: string): void {
+        this.debugEvents.push(message)
+    }
+
+    private isPendingCommandLive(): boolean {
+        if (!this.pendingCommand) return false
+        if (Date.now() - this.pendingCommand.setAt > PENDING_COMMAND_TTL_MS) {
+            this.clearPendingCommand("expired")
+            return false
+        }
+        return true
+    }
+
+    /**
+     * Merge a follow-up final with a sticky incomplete command from a prior final.
+     * Returns detections when handled; null when there is no live pending (caller continues).
+     */
+    private tryCompletePendingCommand(cleaned: string, isFinal: boolean): BibleDetection[] | null {
+        if (!this.isPendingCommandLive()) return null
+
+        const pending = this.pendingCommand!
+        const whole = cleaned
+            .toLowerCase()
+            .replace(/[.,!?;:]/g, "")
+            .trim()
+
+        // Another incomplete fragment replaces the pending kind (e.g. "next" then another "next")
+        if (isFinal) {
+            const replacement = this.matchIncompleteKind(whole)
+            if (replacement && replacement !== "verse" && pending.kind !== "verse") {
+                // "next" then "previous" — switch pending
+                if (replacement !== pending.kind) {
+                    this.setPendingCommand(replacement, whole)
+                    return []
+                }
+                // same kind again — refresh TTL
+                this.setPendingCommand(pending.kind, whole)
+                return []
+            }
+            // "next" then bare "verse" cue as continuation — fall through to merge
+        }
+
+        // Synthesize the spoken phrase VAD split apart
+        const prefix = pending.kind === "back" ? "previous" : pending.kind
+        const merged = `${prefix} ${cleaned}`.replace(/\s+/g, " ").trim()
+        const mergedLower = merged.toLowerCase()
+
+        if (pending.kind === "next") {
+            if (/\bchapter\b/.test(whole) || NEXT_CHAPTER_PHRASES.some((p) => mergedLower.includes(p))) {
+                const detection = this.checkNextChapterCommand(merged.includes("chapter") ? merged : "next chapter")
+                if (detection) {
+                    this.clearPendingCommand("completed")
+                    this.pendingBook = null
+                    this.setContext(detection, true)
+                    this.pushRecent(detection)
+                    this.pushDebug(`pending_command merged "${pending.raw}" + "${cleaned}" → next chapter`)
+                    return [detection]
+                }
+            }
+            if (new RegExp(`^(?:the\\s+)?${VERSE_CUE}\\.?`).test(whole) || NEXT_VERSE_PHRASES.some((p) => mergedLower.includes(p))) {
+                const detection = this.checkNextVerseCommand("next verse")
+                if (detection) {
+                    this.clearPendingCommand("completed")
+                    this.pendingBook = null
+                    this.setContext(detection, false)
+                    this.pushRecent(detection)
+                    this.pushDebug(`pending_command merged "${pending.raw}" + "${cleaned}" → next verse`)
+                    return [detection]
+                }
+            }
+            // Unrelated follow-up — drop pending and let normal parsing handle this text
+            this.clearPendingCommand("flushed")
+            return null
+        }
+
+        if (pending.kind === "previous" || pending.kind === "back") {
+            if (/\bchapter\b/.test(whole) || PREVIOUS_CHAPTER_PHRASES.some((p) => mergedLower.includes(p))) {
+                const detection = this.checkPreviousChapterCommand(merged.includes("chapter") ? merged : "previous chapter")
+                if (detection) {
+                    this.clearPendingCommand("completed")
+                    this.pendingBook = null
+                    this.setContext(detection, true)
+                    this.pushRecent(detection)
+                    this.pushDebug(`pending_command merged "${pending.raw}" + "${cleaned}" → previous chapter`)
+                    return [detection]
+                }
+            }
+            if (new RegExp(`^(?:the\\s+)?${VERSE_CUE}\\.?`).test(whole) || PREVIOUS_VERSE_PHRASES.some((p) => mergedLower.includes(p))) {
+                if (pending.kind === "back") {
+                    // Bare "back" historically stepped one verse back; complete that intent.
+                    const stepped = this.stepBackOneVerse(cleaned)
+                    if (stepped) {
+                        this.clearPendingCommand("completed")
+                        this.pendingBook = null
+                        this.setContext(stepped, false)
+                        this.pushRecent(stepped)
+                        this.pushDebug(`pending_command merged "${pending.raw}" + "${cleaned}" → step back`)
+                        return [stepped]
+                    }
+                }
+                const detection = this.checkPreviousVerseCommand("previous verse")
+                if (detection) {
+                    this.clearPendingCommand("completed")
+                    this.pendingBook = null
+                    this.setContext(detection, false)
+                    this.pushDebug(`pending_command merged "${pending.raw}" + "${cleaned}" → previous verse`)
+                    return [detection]
+                }
+            }
+            this.clearPendingCommand("flushed")
+            return null
+        }
+
+        if (pending.kind === "verse") {
+            // "verse" + "12" / "twelve" / "verse 12"
+            if (this.isContextLive()) {
+                this.context!.pendingVerseCue = true
+                this.context!.allowBareVerse = true
+            }
+            const verseText = new RegExp(`^${VERSE_CUE}\\.?`, "i").test(whole) ? cleaned : `verse ${cleaned}`
+            const contextual = this.detectContextual(verseText)
+            if (contextual) {
+                this.clearPendingCommand("completed")
+                this.pushDebug(`pending_command merged "${pending.raw}" + "${cleaned}" → verse ${contextual.verseStart}`)
+                return [contextual]
+            }
+            // Still waiting (non-number follow-up) — keep pending unless clearly unrelated
+            if (this.extractLoneNumber(cleaned) || this.parseNumber(whole) > 0) {
+                this.clearPendingCommand("flushed")
+                return null
+            }
+            // Unrelated speech
+            if (whole.split(/\s+/).length > 3) {
+                this.clearPendingCommand("flushed")
+                return null
+            }
+            return null
+        }
+
+        return null
+    }
+
+    private matchIncompleteKind(whole: string): PendingCommandKind | null {
+        if (whole === "next") return "next"
+        if (whole === "previous") return "previous"
+        if (whole === "back" || whole === "go back") return "back"
+        if (new RegExp(`^(?:the\\s+)?${VERSE_CUE}\\.?$`).test(whole)) return "verse"
+        return null
+    }
+
+    /** Step one verse back from the most recent detection (legacy bare "back"). */
+    private stepBackOneVerse(snippet: string): BibleDetection | null {
+        const front = this.recentDetections[0]
+        if (!front) return null
+        const previousVerse = front.verseStart - 1
+        if (previousVerse < 1) return null
+        return this.makeDetection(front.bookNumber, front.bookName, front.chapter, previousVerse, undefined, 0.95, snippet, "contextual")
     }
 
     /** Remember a book spoken alone so a later "3:16" / "chapter 2 verse 4" can complete it. */

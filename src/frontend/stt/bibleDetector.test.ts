@@ -390,22 +390,72 @@ describe("BibleDetector", () => {
             expect(detector.processTranscript("next verse")).toEqual([])
         })
 
-        it("treats bare 'next' as a whole utterance as the command", () => {
+        it("holds bare 'next' as pending (does not advance until 'verse' arrives)", () => {
             detector.processTranscript("John 3:16")
-            const [d] = detector.processTranscript("Next")
-            expect(d).toMatchObject({ bookName: "John", chapter: 3, verseStart: 17 })
+            expect(detector.processTranscript("Next", { isFinal: true })).toEqual([])
+            expect(detector.takeDebugEvents().some((e) => e.includes("pending_command set kind=next"))).toBe(true)
         })
 
-        it("treats bare 'back' as a whole utterance as step-back", () => {
+        it("holds bare 'back' as pending (does not step back until completed)", () => {
             detector.processTranscript("John 3:16")
             detector.processTranscript("next verse")
-            const [d] = detector.processTranscript("back")
-            expect(d).toMatchObject({ chapter: 3, verseStart: 16 })
+            expect(detector.processTranscript("back", { isFinal: true })).toEqual([])
         })
 
         it("ignores 'next' inside longer speech", () => {
             detector.processTranscript("John 3:16")
             expect(detector.processTranscript("next week we will meet again")).toEqual([])
+        })
+    })
+
+    describe("split finals (pending command merge)", () => {
+        it("merges final 'next' then final 'verse' into next verse", () => {
+            detector.processTranscript("John 3:16")
+            expect(detector.processTranscript("next", { isFinal: true })).toEqual([])
+            const [d] = detector.processTranscript("verse", { isFinal: true })
+            expect(d).toMatchObject({ bookName: "John", chapter: 3, verseStart: 17 })
+            expect(detector.takeDebugEvents().some((e) => e.includes("pending_command completed") || e.includes("merged"))).toBe(true)
+        })
+
+        it("merges final 'verse' then final '12' into verse 12", () => {
+            detector.processTranscript("John 3:16")
+            expect(detector.processTranscript("verse", { isFinal: true })).toEqual([])
+            const [d] = detector.processTranscript("12", { isFinal: true })
+            expect(d).toMatchObject({ bookName: "John", chapter: 3, verseStart: 12 })
+        })
+
+        it("merges final 'previous' then final 'verse' into previous verse (re-fire)", () => {
+            detector.processTranscript("John 3:16")
+            expect(detector.processTranscript("previous", { isFinal: true })).toEqual([])
+            const [d] = detector.processTranscript("verse", { isFinal: true })
+            expect(d).toMatchObject({ bookName: "John", chapter: 3, verseStart: 16 })
+        })
+
+        it("merges final 'next' then final 'chapter' into next chapter (not next verse)", () => {
+            detector.processTranscript("John 3:16")
+            expect(detector.processTranscript("next", { isFinal: true })).toEqual([])
+            const [d] = detector.processTranscript("chapter", { isFinal: true })
+            expect(d).toMatchObject({ bookName: "John", chapter: 4, verseStart: 1 })
+        })
+
+        it("still accepts 'next verse' in one final", () => {
+            detector.processTranscript("John 3:16")
+            const [d] = detector.processTranscript("next verse", { isFinal: true })
+            expect(d).toMatchObject({ bookName: "John", chapter: 3, verseStart: 17 })
+        })
+
+        it("expires incomplete pending after TTL without firing", () => {
+            detector.processTranscript("John 3:16")
+            expect(detector.processTranscript("next", { isFinal: true })).toEqual([])
+            vi.advanceTimersByTime(3000)
+            expect(detector.processTranscript("verse", { isFinal: true })).toEqual([])
+        })
+
+        it("merges final 'next' then 'verse 12' as next verse", () => {
+            detector.processTranscript("John 3:16")
+            expect(detector.processTranscript("next", { isFinal: true })).toEqual([])
+            const [d] = detector.processTranscript("verse 12", { isFinal: true })
+            expect(d).toMatchObject({ bookName: "John", chapter: 3, verseStart: 17 })
         })
     })
 
@@ -490,10 +540,9 @@ describe("BibleDetector", () => {
             expect(d).toMatchObject({ bookName: "John", chapter: 4, verseStart: 1 })
         })
 
-        it("still treats bare 'next' as next verse on finals", () => {
+        it("holds bare 'next' on finals as pending (does not advance alone)", () => {
             detector.processTranscript("John 3:16")
-            const [d] = detector.processTranscript("next", { isFinal: true })
-            expect(d).toMatchObject({ bookName: "John", chapter: 3, verseStart: 17 })
+            expect(detector.processTranscript("next", { isFinal: true })).toEqual([])
         })
 
         it("does not treat 'next chapter' as 'next verse'", () => {

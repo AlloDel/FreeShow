@@ -385,6 +385,7 @@ function processPartialDetections(transcript: string): void {
 
     // Partials: do not treat bare "next"/"back" as verse commands (avoids stealing "next chapter")
     const referenceHits = bibleDetector.processTranscript(transcript, { isFinal: false })
+    flushDetectorDebug()
     referenceHits.forEach((detection) => scheduleDetection(detection))
 
     // Ensemble: reference path wins when both could fire for this window.
@@ -393,6 +394,36 @@ function processPartialDetections(transcript: string): void {
         const quoteHit = tryQuoteMatch(transcript)
         if (quoteHit) scheduleDetection(quoteHit)
     }
+}
+
+function flushDetectorDebug(): void {
+    for (const line of bibleDetector.takeDebugEvents()) sttDebug(line)
+}
+
+/** Run the bible detector on a final and commit any new hits. */
+function processFinalDetections(transcript: string): void {
+    const referenceHits = bibleDetector.processTranscript(transcript, { isFinal: true }).filter((d) => !utteranceCommittedKeys.has(detectionKey(d)))
+    flushDetectorDebug()
+    if (referenceHits.length) {
+        referenceHits.forEach((d) => handleDetection(d))
+        return
+    }
+    const quoteHit = tryQuoteMatch(transcript)
+    if (quoteHit && !utteranceCommittedKeys.has(detectionKey(quoteHit))) handleDetection(quoteHit)
+}
+
+/**
+ * Short finals that partials intentionally ignore (bare "next"/"verse"/…).
+ * When the final text equals the last partial we still re-run the detector for
+ * these so pending-command sticky merge can arm — but NOT for full phrases like
+ * "next verse" that partials already committed (would double-advance).
+ */
+function isIncompleteCommandCandidate(text: string): boolean {
+    const whole = text
+        .toLowerCase()
+        .replace(/[.,!?;:]/g, "")
+        .trim()
+    return /^(?:next|previous|back|go back|(?:the\s+)?(?:versus|verses|verse|vs|v)\.?)$/.test(whole)
 }
 
 /** Ensure the quotation inverted index matches the active STT Bible version. */
@@ -482,18 +513,18 @@ function handleTranscript(event: TranscriptEvent): void {
                 }
 
                 if (normalizeForCompare(event.transcript) === normalizeForCompare(lastDetectorInput)) {
-                    // already analyzed as the last partial (finals may only differ by
-                    // trailing punctuation from the flush) — commit what's pending
+                    // Same text as the last partial — commit scheduled partial hits.
+                    // Re-run detector only for incomplete command fragments that partials
+                    // skip; full phrases already handled on partial must not double-fire.
                     flushPendingDetections(true)
+                    if (isIncompleteCommandCandidate(event.transcript)) {
+                        processFinalDetections(event.transcript)
+                    } else {
+                        flushDetectorDebug()
+                    }
                 } else {
                     flushPendingDetections(false)
-                    const referenceHits = bibleDetector.processTranscript(event.transcript, { isFinal: true }).filter((d) => !utteranceCommittedKeys.has(detectionKey(d)))
-                    if (referenceHits.length) {
-                        referenceHits.forEach((d) => handleDetection(d))
-                    } else {
-                        const quoteHit = tryQuoteMatch(event.transcript)
-                        if (quoteHit && !utteranceCommittedKeys.has(detectionKey(quoteHit))) handleDetection(quoteHit)
-                    }
+                    processFinalDetections(event.transcript)
                 }
                 endUtterance()
             } else {
