@@ -136,15 +136,21 @@ export async function downloadModel(modelId: string, onProgress?: (downloaded: n
 
     const fileNames = requiredModelFileNames(def)
     let downloadedSoFar = 0
+    // Catalog `size` is an estimate — real HF payloads can be larger. Never report
+    // progress against a total smaller than bytes received (that caused 103%+ in UI).
+    const reportProgress = (bytes: number) => {
+        onProgress?.(bytes, Math.max(def.size, bytes))
+    }
     for (const fileName of fileNames) {
         const target = path.join(dir, fileName)
         const fileBase = downloadedSoFar
         await downloadFile(`${def.baseUrl}/${fileName}`, target, (bytes) => {
-            onProgress?.(fileBase + bytes, def.size)
+            reportProgress(fileBase + bytes)
         })
         downloadedSoFar = fileBase + fs.statSync(target).size
+        reportProgress(downloadedSoFar)
     }
-    onProgress?.(def.size, def.size)
+    onProgress?.(downloadedSoFar, downloadedSoFar)
 }
 
 const MAX_REDIRECTS = 5

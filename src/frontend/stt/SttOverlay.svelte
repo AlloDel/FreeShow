@@ -73,7 +73,7 @@
     let sttStarting: boolean
 
     $: displayTranscript = $sttPartialTranscript || $sttTranscript
-    $: downloadPercent = $sttStatus.downloadTotal > 0 ? Math.round(($sttStatus.downloadProgress / $sttStatus.downloadTotal) * 100) : 0
+    $: downloadPercent = $sttStatus.downloadTotal > 0 ? Math.min(100, Math.round(($sttStatus.downloadProgress / $sttStatus.downloadTotal) * 100)) : 0
     $: sttActive = $sttEnabled || $sttStatus.connected
     $: sttStarting = $sttEnabled && !$sttStatus.connected
     $: statusLabel = $sttStatus.isDownloading ? "Downloading" : sttStarting ? "Starting" : $sttStatus.connected ? "Listening" : "Idle"

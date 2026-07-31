@@ -68,7 +68,7 @@
 
     $: activeModel = $sttModels.find((m) => m.id === $sttSettings.model)
     $: currentModelDownloaded = activeModel?.downloaded || false
-    $: downloadPercent = $sttStatus.downloadTotal > 0 ? Math.round(($sttStatus.downloadProgress / $sttStatus.downloadTotal) * 100) : 0
+    $: downloadPercent = $sttStatus.downloadTotal > 0 ? Math.min(100, Math.round(($sttStatus.downloadProgress / $sttStatus.downloadTotal) * 100)) : 0
     $: isDev = !!importMetaEnv.env?.DEV
     $: isWhisperModel = ($sttSettings.model || "").includes("whisper") || activeModel?.kind === "offline-whisper"
 </script>
