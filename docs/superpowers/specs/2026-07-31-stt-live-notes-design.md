@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-31  
 **Branch (planned):** `feature/stt-live-notes`  
-**Status:** Approved in conversation; awaiting user review of this spec, then implementation plan  
+**Status:** Approved (incl. Zoom-style timestamps); ready for implementation plan  
 **Depends on:** FreeShow local STT pipeline (`feature/stt-auto-bible` / Nemotron streaming)  
 **Inspiration:** [digimata/quill](https://github.com/digimata/quill) (local session → transcript artifact) and [digimata/parrot](https://github.com/digimata/parrot) (fast on-device speech → text). FreeShow adds church-specific annotated transcript + click-to-project.
 
@@ -14,19 +14,10 @@ While the existing STT auto-Bible path listens, detects, and projects scripture,
 1. Scroll back through what was said during the service.
 2. See Bible references **highlighted and clickable** in context.
 3. Re-project an older verse / quotation from minutes earlier without re-speaking it.
-4. When listening stops, **finalize** a session artifact and **export** it for members
+4. Show **Zoom-style session timestamps** on each transcript line (`[mm:ss]` / `[hh:mm:ss]`).
+5. When listening stops, **finalize** a session artifact and **export** it for members
    (txt, markdown, and pdf or docx).
-
-Live Notes is **not** a second feature that replaces detection. It runs **alongside**
-auto-detect + auto-project on the same STT session.
-
-## Goals
-
-1. One mic / one ASR session powers both auto-show and notes.
-2. Notes UI is useful mid-service (rewind + click) and after stop (export).
-3. Fully local / offline for capture and annotation (no cloud required for v1).
-4. Small, reviewable addition on top of existing `src/frontend/stt` + `src/electron/stt`.
-5. Leave a clean hook for v1.1 extractive summaries once the UI is solid.
+6. Leave a clean hook for v1.1 extractive summaries once the UI is solid.
 
 ## Non-Goals (v1)
 
@@ -108,11 +99,34 @@ interface NotesSession {
 interface NotesSegment {
   id: string
   text: string
+  /** Wall-clock time when the final was committed (Date.now()). */
   at: number
+  /**
+   * Milliseconds from session.startedAt — primary UI / export timestamp
+   * (Zoom-style `[mm:ss]` / `[hh:mm:ss]` on each line).
+   */
+  offsetMs: number
   /** Only finals are persisted. Live partial is UI-only at the tail. */
   kind: "final"
 }
 ```
+
+Live partial (UI-only) may show a provisional clock from `Date.now() - startedAt` without
+persisting until the final lands.
+
+### Timestamps (Zoom-style)
+
+- Every persisted segment carries `offsetMs` from session start.
+- **Notes UI:** prefix each line with `[mm:ss]` (use `[hh:mm:ss]` once duration ≥ 1 hour).
+- **Click / jump:** optional later — v1 uses timestamps for reading + export; seeking a
+  recording is out of scope (no separate A/V file in FreeShow notes v1).
+- **Exports:**
+  - **txt / md:** each line starts with the same bracket timestamp.
+  - **pdf / docx:** same timestamps in the body.
+- **Annotations** inherit the parent segment’s timestamp for chips and the refs appendix
+  (e.g. `12:04 — John 3:16`).
+- Clock is **monotonic session time**, not wall-clock in the transcript body (wall-clock
+  belongs in the session header: started/ended locale strings).```
 
 ### Annotation
 
@@ -191,9 +205,9 @@ Starting listen again creates a **new** session (previous remains on disk).
 
 | Format | Contents |
 |---|---|
-| **txt** | Plain chronological transcript (segment texts joined) |
-| **md** | Transcript with inline reference markers + appendix of unique refs |
-| **pdf or docx** | Readable handout: title, date/duration, body, refs list |
+| **txt** | Timestamped chronological transcript (`[mm:ss] …`) |
+| **md** | Same timestamps + inline reference markers + appendix of unique refs (with times) |
+| **pdf or docx** | Readable handout: title, date/duration, timestamped body, refs list |
 
 Pick **one** of pdf/docx in the implementation plan based on Electron dependency cost
 (prefer pdf for member handouts if a light library already fits; otherwise docx).
@@ -214,7 +228,8 @@ No cloud upload. User copies/shares files themselves.
 
 ## Testing
 
-- Unit: `notesSession` append / annotate / finalize; export txt/md golden strings.
+- Unit: `notesSession` append / annotate / finalize; `offsetMs` assignment; export txt/md
+  golden strings including `[mm:ss]` prefixes.
 - Unit: click handler maps annotation → scripture helper args (mock `playScripture`).
 - Manual: mid-service scroll-back + re-project; stop → open exports; confirm auto-show
   still works with Notes tab hidden.
