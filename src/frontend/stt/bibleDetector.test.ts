@@ -390,6 +390,25 @@ describe("BibleDetector", () => {
             expect(detector.processTranscript("next verse")).toEqual([])
         })
 
+        it("holds 'move to the next' as pending next (VAD mid-phrase cut)", () => {
+            detector.processTranscript("John 3:16")
+            expect(detector.processTranscript("Move to the next", { isFinal: true })).toEqual([])
+            expect(detector.takeDebugEvents().some((e) => e.includes("pending_command set kind=next"))).toBe(true)
+            const [d] = detector.processTranscript("verse", { isFinal: true })
+            expect(d).toMatchObject({ bookName: "John", chapter: 3, verseStart: 17 })
+        })
+
+        it("merges chapter-only then bare verse number across finals", () => {
+            expect(detector.processTranscript("John 3", { isFinal: true })[0]).toMatchObject({
+                bookName: "John",
+                chapter: 3,
+                verseStart: 1,
+                source: "contextual"
+            })
+            const [d] = detector.processTranscript("16", { isFinal: true })
+            expect(d).toMatchObject({ bookName: "John", chapter: 3, verseStart: 16 })
+        })
+
         it("holds bare 'next' as pending (does not advance until 'verse' arrives)", () => {
             detector.processTranscript("John 3:16")
             expect(detector.processTranscript("Next", { isFinal: true })).toEqual([])
@@ -447,7 +466,7 @@ describe("BibleDetector", () => {
         it("expires bare 'next' with no action when TTL elapses without continuation", () => {
             detector.processTranscript("John 3:16")
             expect(detector.processTranscript("next", { isFinal: true })).toEqual([])
-            vi.advanceTimersByTime(2000)
+            vi.advanceTimersByTime(4000)
             expect(detector.takeDebugEvents().some((e) => e.includes("pending_command expired no action"))).toBe(true)
             // No verse advance — still on John 3:16 context for a later "next verse"
             const [d] = detector.processTranscript("next verse", { isFinal: true })

@@ -95,7 +95,7 @@ export const EVAL_FIXTURES: EvalFixture[] = [
         description: "Bare 'next' TTL expires with no action (does not auto-advance)",
         setup: ["John 3:16"],
         steps: [
-            { text: "next", isFinal: true, advanceMs: 2000 },
+            { text: "next", isFinal: true, advanceMs: 4000 },
             { text: "next verse", isFinal: true }
         ],
         expect: { bookName: "John", chapter: 3, verseStart: 17 },

@@ -157,8 +157,9 @@ Rough end-to-end budget for a short spoken reference (“John 3:16”) with auto
 | Final + detection → `playScripture` | ~50–150 ms |
 | **Spoken end → verse on screen** | **~0.5–1.5 s** typical |
 
-Incomplete command merge (`next` + `verse`) waits up to `PENDING_COMMAND_TTL_MS` (1800 ms) for
+Incomplete command merge (`next` + `verse`) waits up to `PENDING_COMMAND_TTL_MS` (3500 ms) for
 the continuation; bare `next`/`previous`/`back` expire with **no action** (no auto-advance).
+Short lead-ins like `move to the next` are treated as incomplete `next` when VAD cuts early.
 
 Trailing audio after Silero drops speech is still fed into the open recognizer stream so short
 digits (“4”) are not cut off.

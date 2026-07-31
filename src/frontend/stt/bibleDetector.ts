@@ -104,10 +104,10 @@ const CONTEXT_TIMEOUT_MS = 60_000
 /**
  * How long an incomplete command fragment ("next", "verse", …) waits for the
  * rest of the phrase when VAD/ASR splits one spoken command into multiple finals.
- * Kept long enough for slow speech merge; bare "next"/"previous"/"back" expire
- * with no action (no auto-fire) when the window ends without a continuation.
+ * Must outlast common pauses after "next"/"previous"/"John 3" (~2–3 s). Bare
+ * "next"/"previous"/"back" still expire with no action when the window ends.
  */
-export const PENDING_COMMAND_TTL_MS = 1800
+export const PENDING_COMMAND_TTL_MS = 3500
 
 type PendingCommandKind = "next" | "previous" | "back" | "verse"
 
@@ -840,8 +840,9 @@ export class BibleDetector {
     }
 
     /**
-     * Incomplete command fragment as the whole final ("next", "previous", "back", "verse").
-     * Do not treat as a complete next-verse / clear — wait for the rest within TTL.
+     * Incomplete command fragment as the whole final ("next", "move to the next",
+     * "previous", "back", "verse"). Do not treat as a complete next-verse — wait
+     * for the rest within TTL when VAD cuts mid-phrase.
      */
     private notePendingCommand(cleaned: string): boolean {
         const whole = cleaned
@@ -849,12 +850,7 @@ export class BibleDetector {
             .replace(/[.,!?;:]/g, "")
             .trim()
 
-        let kind: PendingCommandKind | null = null
-        if (whole === "next") kind = "next"
-        else if (whole === "previous") kind = "previous"
-        else if (whole === "back" || whole === "go back") kind = "back"
-        else if (VERSE_CUE_ONLY.test(whole)) kind = "verse"
-
+        const kind = this.matchIncompleteKind(whole)
         if (!kind) return false
 
         // Verse cue without warm context cannot complete a verse jump later
@@ -1092,10 +1088,16 @@ export class BibleDetector {
     }
 
     private matchIncompleteKind(whole: string): PendingCommandKind | null {
-        if (whole === "next") return "next"
-        if (whole === "previous") return "previous"
-        if (whole === "back" || whole === "go back") return "back"
-        if (VERSE_CUE_ONLY.test(whole)) return "verse"
+        const w = whole
+            .toLowerCase()
+            .replace(/[.,!?;:]/g, "")
+            .replace(/\s+/g, " ")
+            .trim()
+        // Bare or short lead-in ending in navigation word (VAD often cuts before "verse")
+        if (/^(?:(?:okay|ok|and|then|so|uh+|um+|please|lets|let's|now)\s+)*(?:(?:move|go)\s+to\s+(?:the\s+)?)?next$/.test(w)) return "next"
+        if (/^(?:(?:okay|ok|and|then|so|uh+|um+|please|lets|let's|now)\s+)*(?:go\s+)?(?:to\s+)?(?:the\s+)?previous$/.test(w)) return "previous"
+        if (w === "back" || w === "go back") return "back"
+        if (VERSE_CUE_ONLY.test(w)) return "verse"
         return null
     }
 
@@ -1121,6 +1123,7 @@ export class BibleDetector {
             return
         }
         this.pendingBook = { book: match.book, setAt: Date.now() }
+        this.pushDebug(`pending_book set "${match.book.name}"`)
         console.log(`[STT] Book-only pending: ${match.book.name}`)
     }
 

@@ -10,7 +10,7 @@ import type { WhisperModelPaths } from "./modelCatalog"
 
 const SAMPLE_RATE = 16000
 const PREROLL_MAX_SAMPLES = 6400
-const VAD_MIN_SILENCE = 0.52
+const VAD_MIN_SILENCE = 0.9
 const VAD_MAX_SPEECH = 12
 const VAD_THRESHOLD = 0.5
 const VAD_MIN_SPEECH = 0.08

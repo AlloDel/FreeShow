@@ -32,12 +32,12 @@ const PREROLL_MAX_SAMPLES = 6400
 const FINALIZE_PAD_SAMPLES = 6400
 /**
  * VAD closes an utterance after this much trailing silence (seconds).
- * 0.35 was too aggressive — brief pauses between "next"/"verse" or "verse"/digit
- * produced separate finals with the trailing word dropped. Sherpa Silero examples
- * use 0.5; 0.7 felt frozen on slow speech. 0.52 balances split-phrase recovery
- * with responsive finals while partials keep streaming during the wait.
+ * 0.35–0.52 were too aggressive for deliberate Bible commands: pauses after
+ * "next", "John", "John 3", or "previous" finalized early and dropped "verse" /
+ * "16". 0.9 keeps slow phrasing in one utterance; partials still stream during
+ * the wait. Continuous sermon speech gets slightly later finals.
  */
-const VAD_MIN_SILENCE = 0.52
+const VAD_MIN_SILENCE = 0.9
 /** Force-close long utterances so finals keep flowing during continuous speech (seconds). */
 const VAD_MAX_SPEECH = 12
 /**
