@@ -81,66 +81,49 @@ export async function startStt(): Promise<void> {
     // Set up audio processing (16kHz mono)
     try {
         audioContext = new AudioContext({ sampleRate: 16000 })
+        // Chromium often starts suspended until a user gesture / resume.
+        if (audioContext.state === "suspended") {
+            await audioContext.resume()
+        }
         const source = audioContext.createMediaStreamSource(mediaStream)
 
-        // Use AudioWorkletNode to replace the deprecated ScriptProcessorNode
-        const workletCode = `
-            class CaptureProcessor extends AudioWorkletProcessor {
-                constructor() {
-                    super();
-                    // 1024 samples @ 16 kHz ≈ 64 ms — lower IPC latency for short bible refs
-                    this.chunkSize = 1024;
-                    this.pending = new Int16Array(this.chunkSize);
-                    this.pendingLength = 0;
-                }
-
-                flushChunk() {
-                    if (!this.pendingLength) return;
-                    const chunk = this.pending.slice(0, this.pendingLength);
-                    this.port.postMessage(chunk, [chunk.buffer]);
-                    this.pending = new Int16Array(this.chunkSize);
-                    this.pendingLength = 0;
-                }
-
-                process(inputs) {
-                    const input = inputs[0];
-                    if (!input || input.length === 0 || input[0].length === 0) return true;
-
-                    const channelData = input[0];
-
-                    for (let i = 0; i < channelData.length; i++) {
-                        const sample = Math.max(-1, Math.min(1, channelData[i]));
-                        this.pending[this.pendingLength++] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
-
-                        if (this.pendingLength === this.chunkSize) {
-                            this.flushChunk();
-                        }
-                    }
-
-                    return true;
-                }
-            }
-            registerProcessor('capture-processor', CaptureProcessor);
-        `
-        const blob = new Blob([workletCode], { type: "application/javascript" })
-        const workletUrl = URL.createObjectURL(blob)
-        await audioContext.audioWorklet.addModule(workletUrl)
-        URL.revokeObjectURL(workletUrl)
-
-        // We keep scriptProcessor in the outer scope as an any/unknown variable,
-        // but assign the AudioWorkletNode so it can be disconnected later.
-        const workletNode = new AudioWorkletNode(audioContext, "capture-processor")
-        const mutedMonitor = audioContext.createGain()
-        mutedMonitor.gain.value = 0
-        scriptProcessor = workletNode as any
-
-        workletNode.port.onmessage = (event) => {
-            // Send to Electron
-            sendStt("AUDIO_DATA", event.data)
+        const onPcm = (int16: Int16Array) => {
+            sendStt("AUDIO_DATA", int16)
         }
 
-        source.connect(workletNode)
-        workletNode.connect(mutedMonitor)
+        // Prefer AudioWorklet (static asset — blob modules often fail to register in Electron).
+        // Fall back to ScriptProcessorNode if the worklet cannot be created.
+        let captureNode: AudioNode
+        try {
+            await audioContext.audioWorklet.addModule("./assets/stt-capture-processor.js")
+            const workletNode = new AudioWorkletNode(audioContext, "capture-processor")
+            workletNode.port.onmessage = (event) => {
+                onPcm(event.data)
+            }
+            captureNode = workletNode
+        } catch (workletErr) {
+            console.warn("[STT] AudioWorklet unavailable; falling back to ScriptProcessorNode:", workletErr)
+            sttDebug(`warn audio_worklet_fallback "${workletErr instanceof Error ? workletErr.message : String(workletErr)}"`)
+            const bufferSize = 1024
+            const processor = audioContext.createScriptProcessor(bufferSize, 1, 1)
+            processor.onaudioprocess = (event) => {
+                const channelData = event.inputBuffer.getChannelData(0)
+                const int16 = new Int16Array(channelData.length)
+                for (let i = 0; i < channelData.length; i++) {
+                    const sample = Math.max(-1, Math.min(1, channelData[i]))
+                    int16[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff
+                }
+                onPcm(int16)
+            }
+            captureNode = processor
+        }
+
+        const mutedMonitor = audioContext.createGain()
+        mutedMonitor.gain.value = 0
+        scriptProcessor = captureNode as any
+
+        source.connect(captureNode)
+        captureNode.connect(mutedMonitor)
         mutedMonitor.connect(audioContext.destination)
 
         // Tell electron to start the streaming STT engine (NVIDIA Nemotron)
