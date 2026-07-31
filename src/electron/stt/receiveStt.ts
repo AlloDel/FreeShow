@@ -1,7 +1,7 @@
 // ----- FreeShow STT — IPC Router -----
 // Handles all STT messages over the dedicated "STT" IPC channel.
 // Follows the same pattern as receiveAudio.ts.
-// ASR runs in a forked worker (sttWorkerHost); falls back to in-process on fork failure.
+// ASR defaults to in-process; set FREESHOW_STT_USE_WORKER=1 for forked worker (sttWorkerHost).
 
 import type { IpcMainEvent } from "electron"
 import type { SttMessage, SttStartPayload, TranscriptEvent } from "../../types/Stt"
@@ -105,33 +105,37 @@ async function startStt(payload: SttStartPayload): Promise<void> {
 
         const vadModelPath = await ensureVadModel()
 
-        // Prefer forked worker so sherpa-onnx stays off the Electron main thread.
-        // Hotword biasing is experimental/disabled — never pass a hotwords file into start.
-        let host: SttWorkerHost | null = null
-        try {
-            host = new SttWorkerHost()
-            bindTranscript(host)
-            await host.start({ modelId, kind, paths, vadModelPath })
-            runtime = host
-            usingWorker = true
-            setActiveModel(modelId)
-            sendStatus()
-            sendDebugLogPath()
-            maybeDebug(`session start model=${modelId} kind=${kind} runtime=worker hotwords=disabled log=${getSttDebugLogPath()}`)
-            console.log(`[STT] Started worker with model: ${modelId} (${kind})`)
-            return
-        } catch (forkErr) {
-            console.warn("[STT] Worker fork failed; falling back to in-process engine:", forkErr)
-            maybeDebug(`warn worker_fork_failed "${forkErr instanceof Error ? forkErr.message : String(forkErr)}"`)
+        // Default: in-process (reliable). Worker is opt-in via FREESHOW_STT_USE_WORKER=1 —
+        // Phase 2 forked ASR, but Electron IPC was dropping PCM (Buffer≠Uint8Array) so
+        // sessions connected with zero transcripts. Worker path is fixed; keep opt-in until soak-tested.
+        const preferWorker = process.env.FREESHOW_STT_USE_WORKER === "1"
+        if (preferWorker) {
+            let host: SttWorkerHost | null = null
             try {
-                host?.stop()
-            } catch {
-                /* */
+                host = new SttWorkerHost()
+                bindTranscript(host)
+                await host.start({ modelId, kind, paths, vadModelPath })
+                runtime = host
+                usingWorker = true
+                setActiveModel(modelId)
+                sendStatus()
+                sendDebugLogPath()
+                maybeDebug(`session start model=${modelId} kind=${kind} runtime=worker hotwords=disabled log=${getSttDebugLogPath()}`)
+                console.log(`[STT] Started worker with model: ${modelId} (${kind})`)
+                return
+            } catch (forkErr) {
+                console.warn("[STT] Worker fork failed; falling back to in-process engine:", forkErr)
+                maybeDebug(`warn worker_fork_failed "${forkErr instanceof Error ? forkErr.message : String(forkErr)}"`)
+                try {
+                    host?.stop()
+                } catch {
+                    /* */
+                }
+                host = null
             }
-            host = null
         }
 
-        // In-process fallback (dev resilience)
+        // In-process (default) — same path that produced transcripts before the worker regression.
         const engine = kind === "offline-whisper" ? new WhisperOfflineEngine() : new SttEngine()
         bindTranscript(engine)
         // Quarantined: pass null — bible hotwords biasing is experimental/disabled.

@@ -82,16 +82,28 @@ export class SttWorkerHost extends EventEmitter {
         child.send(startMsg)
 
         await ready
+        this.audioChunksSent = 0
         this.isRunning = true
     }
+
+    private audioChunksSent = 0
 
     pushAudio(samples: Float32Array): void {
         if (!this.child?.connected || !this.isRunning) return
 
-        // Serialize as Buffer for stable IPC (copy of the underlying bytes).
-        const pcm = Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength)
-        const msg: SttWorkerInMessage = { type: "audio", pcm }
-        this.child.send(msg)
+        // Send Float32Array directly — structured clone preserves TypedArrays.
+        // (Buffer often arrives as Uint8Array / JSON Buffer and was previously dropped.)
+        const copy = samples.length ? new Float32Array(samples) : samples
+        const msg: SttWorkerInMessage = { type: "audio", samples: copy }
+        try {
+            this.child.send(msg)
+            this.audioChunksSent++
+            if (this.audioChunksSent === 1) {
+                console.log(`[STT] Worker audio streaming (${copy.length} samples/chunk)`)
+            }
+        } catch (err) {
+            console.error("[STT] Failed to send audio to worker:", err)
+        }
     }
 
     stop(): void {

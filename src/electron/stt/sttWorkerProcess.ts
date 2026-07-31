@@ -5,6 +5,7 @@
 
 import type { TranscriptEvent } from "../../types/Stt"
 import type { SherpaModelPaths, SttModelKind, WhisperModelPaths } from "./modelCatalog"
+import { float32FromIpcPcm } from "./pcmIpc"
 import { SttEngine } from "./sttEngine"
 import { WhisperOfflineEngine } from "./whisperOfflineEngine"
 
@@ -18,7 +19,8 @@ export type SttWorkerInMessage =
           /** Hotword biasing is experimental/disabled — host should pass null. */
           hotwordsFile?: string | null
       }
-    | { type: "audio"; pcm: ArrayBuffer | Buffer; byteOffset?: number; byteLength?: number }
+    /** `samples` preferred (Float32Array survives structured clone). `pcm` kept for older hosts. */
+    | { type: "audio"; samples?: Float32Array; pcm?: ArrayBuffer | Buffer | Uint8Array; byteOffset?: number; byteLength?: number }
     | { type: "stop" }
 
 export type SttWorkerOutMessage = { type: "ready" } | { type: "transcript"; event: TranscriptEvent } | { type: "error"; error: string } | { type: "stopped" }
@@ -65,23 +67,30 @@ function startEngine(msg: Extract<SttWorkerInMessage, { type: "start" }>): void 
     send({ type: "ready" })
 }
 
+let audioFramesOk = 0
+let audioFramesDropped = 0
+
 function handleAudio(msg: Extract<SttWorkerInMessage, { type: "audio" }>): void {
     if (!engine?.isRunning) return
 
-    const raw = msg.pcm
-    let samples: Float32Array
-    if (Buffer.isBuffer(raw)) {
-        samples = new Float32Array(raw.buffer, raw.byteOffset, Math.floor(raw.byteLength / Float32Array.BYTES_PER_ELEMENT))
-    } else if (raw instanceof ArrayBuffer) {
-        const offset = msg.byteOffset || 0
-        const length = msg.byteLength ?? raw.byteLength - offset
-        samples = new Float32Array(raw, offset, Math.floor(length / Float32Array.BYTES_PER_ELEMENT))
-    } else {
+    // Prefer Float32Array (`samples`); fall back to byte payloads (`pcm`).
+    const samples = msg.samples != null ? float32FromIpcPcm(msg.samples) : float32FromIpcPcm(msg.pcm, msg.byteOffset, msg.byteLength)
+    if (!samples) {
+        audioFramesDropped++
+        if (audioFramesDropped === 1) {
+            const raw = msg.samples ?? msg.pcm
+            console.error("[STT:worker] Could not decode audio IPC payload", raw == null ? "null" : Object.prototype.toString.call(raw))
+            send({ type: "error", error: "STT worker could not decode audio IPC payload (no transcription possible)" })
+        }
         return
     }
 
-    // Copy — IPC buffers may be reused / detached.
-    engine.pushAudio(new Float32Array(samples))
+    audioFramesOk++
+    if (audioFramesOk === 1) {
+        console.log(`[STT:worker] First audio frame (${samples.length} samples)`)
+    }
+
+    engine.pushAudio(samples)
 }
 
 function onMessage(msg: SttWorkerInMessage): void {

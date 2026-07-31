@@ -10,10 +10,10 @@ nothing about Bibles, verses, or auto-show — that logic lives entirely in the 
 Transcription uses [`sherpa-onnx-node`](https://github.com/k2-fsa/sherpa-onnx), fully
 offline/on-device (no network once models are downloaded).
 
-- **`sttWorkerHost.ts` / `sttWorkerProcess.ts`** — ASR runs in a `child_process.fork` worker
-  (`FREESHOW_STT_WORKER=1`), same pattern as `src/electron/utils/spotify.ts`. The host forks
-  `sttWorkerProcess.js` under `__dirname`, forwards PCM as `Buffer`, and relays transcript
-  events. If fork fails, `receiveStt.ts` falls back to an in-process engine with a console warning.
+- **`sttEngine.ts` / `whisperOfflineEngine.ts`** — default **in-process** ASR (reliable).
+- **`sttWorkerHost.ts` / `sttWorkerProcess.ts`** — optional forked worker (`FREESHOW_STT_USE_WORKER=1`).
+  Host sends `Float32Array` PCM (structured clone); worker accepts TypedArray / Buffer / legacy
+  JSON Buffer via `pcmIpc.ts`. The worker child boots only when `FREESHOW_STT_WORKER=1` (set by the host).
 - **`sttEngine.ts`** — streaming `OnlineRecognizer` (Nemotron transducer). Silero VAD, fresh
   stream per utterance, partials + finals.
 - **`whisperOfflineEngine.ts`** — optional offline `OfflineRecognizer` (Whisper). Same VAD
@@ -55,7 +55,7 @@ the same `{ channel, data }` envelope pattern as `receiveAudio.ts`. `receiveStt.
 
 | Channel          | Payload                                              | Effect                                                                                    |
 | ---------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `START`              | `{ modelId?, debugLogging? }`                        | Starts worker (or in-process fallback) with the downloaded model                          |
+| `START`              | `{ modelId?, debugLogging? }`                        | Starts in-process engine (or worker if `FREESHOW_STT_USE_WORKER=1`) with the downloaded model |
 | `STOP`               | —                                                    | Stops and tears down the engine/worker                                                    |
 | `AUDIO_DATA`         | `Int16Array` / `Float32Array` / typed-array-like PCM | Fed into the running runtime (converted to Float32 if needed)                             |
 | `GET_STATUS`         | —                                                    | Requests a `STATUS` reply                                                                 |
@@ -101,4 +101,4 @@ npm run test:unit -- src/frontend/stt/
 - `sttWorkerHost.ts` / `sttWorkerProcess.ts` — fork isolation for ASR.
 - `bibleHotwords.ts` — reference-only hotwords file (biasing disabled at runtime).
 - `sttDebugLog.ts` — appends greppable `[STT:debug]` lines to `userData/stt-debug.log`.
-- `receiveStt.ts` — IPC router; prefers worker host, falls back in-process.
+- `receiveStt.ts` — IPC router; in-process by default, worker opt-in via `FREESHOW_STT_USE_WORKER=1`.
