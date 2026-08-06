@@ -380,9 +380,12 @@ export class BibleDetector {
                 this.pushDebug(`reject_out_of_range ${match.book.name} ${ref.chapter}:${ref.verseStart}`)
                 continue
             }
+            // A range that runs past the end of the chapter is clamped rather than dropped:
+            // the start is valid, so showing "30 to the end" beats showing nothing.
             if (ref.verseEnd && !isValidChapterVerse(match.book.number, ref.chapter, ref.verseEnd)) {
-                this.pushDebug(`reject_out_of_range ${match.book.name} ${ref.chapter}:${ref.verseEnd}`)
-                continue
+                const lastVerse = maxVerseInChapter(match.book.number, ref.chapter)
+                this.pushDebug(`clamp_range_end ${match.book.name} ${ref.chapter}:${ref.verseEnd} -> ${lastVerse}`)
+                ref.verseEnd = lastVerse > ref.verseStart ? lastVerse : undefined
             }
 
             // Misheard / common-word aliases need a full chapter+verse unless the alias
@@ -448,6 +451,12 @@ export class BibleDetector {
         if (!isValidChapterVerse(context.bookNumber, context.chapter, verse.start)) {
             this.pushDebug(`reject_out_of_range ${context.bookName} ${context.chapter}:${verse.start}`)
             return null
+        }
+
+        if (verse.end && !isValidChapterVerse(context.bookNumber, context.chapter, verse.end)) {
+            const lastVerse = maxVerseInChapter(context.bookNumber, context.chapter)
+            this.pushDebug(`clamp_range_end ${context.bookName} ${context.chapter}:${verse.end} -> ${lastVerse}`)
+            verse.end = lastVerse > verse.start ? lastVerse : undefined
         }
 
         const detection = this.makeDetection(context.bookNumber, context.bookName, context.chapter, verse.start, verse.end, 0.9, cleaned, "contextual")

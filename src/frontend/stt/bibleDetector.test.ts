@@ -887,4 +887,38 @@ describe("BibleDetector", () => {
             it("ignores praise without a reference", () => expectRef("he was a good man of faith", ""))
         })
     })
+
+    describe("verse bounds", () => {
+        const ref = (utterances: string[]) => {
+            const detector = new BibleDetector()
+            let last = ""
+            for (const utterance of utterances) {
+                const [detection] = detector.processTranscript(utterance, { isFinal: true })
+                last = detection ? `${detection.bookName} ${detection.chapter}:${detection.verseStart}${detection.verseEnd ? "-" + detection.verseEnd : ""}` : ""
+            }
+            return last
+        }
+
+        it("rejects a verse that does not exist", () => {
+            expect(ref(["Genesis chapter 1 verse 40"])).toBe("")
+            expect(ref(["Genesis 1:40"])).toBe("")
+        })
+
+        it("rejects an out of range verse spoken against a live chapter", () => {
+            expect(ref(["Genesis chapter 1 verse 5", "verse 40"])).toBe("")
+        })
+
+        it("rejects an impossible chapter", () => {
+            expect(ref(["Genesis chapter 99 verse 1"])).toBe("")
+        })
+
+        it("clamps a range that runs past the end of the chapter", () => {
+            // Genesis 1 ends at verse 31 - the start is valid, so show 30 to the end
+            expect(ref(["Genesis 1 verses 30 to 45"])).toBe("Genesis 1:30-31")
+        })
+
+        it("keeps the last valid verse of a chapter", () => {
+            expect(ref(["Genesis chapter 1 verse 31"])).toBe("Genesis 1:31")
+        })
+    })
 })
