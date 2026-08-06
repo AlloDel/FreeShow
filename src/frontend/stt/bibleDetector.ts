@@ -540,6 +540,7 @@ export class BibleDetector {
             result = result.replace(regex, "")
         }
         result = result.replace(/[Ll]ook at\s+(?=[A-Z])/g, "")
+        result = reorderOfPhrasing(result)
         return result.replace(/\s+/g, " ").trim()
     }
 
@@ -677,10 +678,26 @@ export class BibleDetector {
     }
 
     private parseReference(text: string, match: BookMatch): { chapter: number; verseStart: number; verseEnd?: number; pendingVerseCue?: boolean } | null {
-        const afterBook = text
-            .substring(match.end)
-            .trim()
-            .replace(/^[,.;:!?]+\s*/, "")
+        // Spoken number words are converted to digits first, so every pattern below works on
+        // one uniform shape. Doing it per-pattern meant a regex could capture only the first
+        // word of a compound number ("verse thirty one" landing on verse 30).
+        const afterBook = normalizeSpokenNumbers(
+            text
+                .substring(match.end)
+                .trim()
+                .replace(/^[,.;:!?]+\s*/, "")
+        )
+
+        // A single-chapter book spoken with only a verse ("the book of Jude verse three")
+        // can only mean chapter 1, so the missing chapter is not ambiguous here.
+        if (match.book.maxChapters === 1) {
+            const verseOnly = afterBook.match(/^(?:and\s+)?(?:verse|verses|vs|v)\.?\s*(\d{1,3})(?:\s*(?:through|thru|to|and|-|–|—)\s*(\d{1,3}))?/i)
+            if (verseOnly) {
+                const verseStart = parseInt(verseOnly[1])
+                const verseEnd = verseOnly[2] ? parseInt(verseOnly[2]) : undefined
+                if (verseStart > 0) return { chapter: 1, verseStart, verseEnd: verseEnd && verseEnd > verseStart ? verseEnd : undefined }
+            }
+        }
 
         // Pattern 1: "3:16", "3.16", or "3-16"
         const separatedPattern = /^(\d{1,3})\s*[:.-]\s*(\d{1,3})(?:\s*[-–—]\s*(\d{1,3}))?/
@@ -694,7 +711,7 @@ export class BibleDetector {
         }
 
         // Pattern 1b: spoken "colon" — "3 colon 16", "eight colon twenty eight"
-        const colonPattern = /^(\d{1,3}|[a-z]+(?:\s+[a-z]+)?)\s+colon\s+(\d{1,3}|[a-z]+(?:\s+[a-z]+)?)(?:\s*(?:through|to|-|–|—)\s*(\d{1,3}|[a-z]+(?:\s+[a-z]+)?))?(?:\s|$|[,.!?;:])/i
+        const colonPattern = /^(\d{1,3}|[a-z]+(?:\s+[a-z]+)?)\s+colon\s+(\d{1,3}|[a-z]+(?:\s+[a-z]+)?)(?:\s*(?:through|thru|to|and|-|–|—)\s*(\d{1,3}|[a-z]+(?:\s+[a-z]+)?))?(?:\s|$|[,.!?;:])/i
         const colonMatch = afterBook.match(colonPattern)
         if (colonMatch) {
             const chapter = this.parseNumber(colonMatch[1])
@@ -707,7 +724,7 @@ export class BibleDetector {
 
         // Pattern 2: "chapter 3 verse 16", "3 vs 4", "3 versus 4", "3 v.4", "3vs16"
         // VERSE_CUE lists "versus" before "verse" so ASR "versus" is not split into verse+"ersus".
-        const spokenPattern = new RegExp(`^(?:(?:chapter|chap|ch)\\s+)?(\\d{1,3}|[a-z ]+?)(?:\\s*[,.;:]?\\s+|\\s*(?=${VERSE_CUE}\\.?\\s*(?:\\d|[a-z])))(?:${VERSE_CUE})\\.?\\s*(\\d{1,3}|[a-z ]+?)(?:\\s*(?:through|to|-|–|—)\\s*(\\d{1,3}|[a-z ]+?))?(?:\\s|$|[,.!?;:])`, "i")
+        const spokenPattern = new RegExp(`^(?:(?:chapter|chap|ch)\\s+)?(\\d{1,3}|[a-z ]+?)(?:\\s*[,.;:]?\\s+(?:and\\s+)?|\\s*(?=${VERSE_CUE}\\.?\\s*(?:\\d|[a-z])))(?:${VERSE_CUE})\\.?\\s*(\\d{1,3}|[a-z ]+?)(?:\\s*(?:through|thru|to|and|-|–|—)\\s*(\\d{1,3}|[a-z ]+?))?(?:\\s|$|[,.!?;:])`, "i")
         const spokenMatch = afterBook.match(spokenPattern)
         if (spokenMatch) {
             const chapter = this.parseNumber(spokenMatch[1])
@@ -732,7 +749,7 @@ export class BibleDetector {
         }
 
         // Pattern 3: bare chapter + verse after book name: "Genesis 8 5"
-        const bareChapterVersePattern = /^(\d{1,3}|[a-z]+(?:\s+[a-z]+)?)\s+(\d{1,3}|[a-z]+(?:\s+[a-z]+)?)(?:\s*(?:through|to|-|–|—)\s*(\d{1,3}|[a-z]+(?:\s+[a-z]+)?))?(?:\s|$|[,.!?;:])/i
+        const bareChapterVersePattern = /^(\d{1,3}|[a-z]+(?:\s+[a-z]+)?)\s+(\d{1,3}|[a-z]+(?:\s+[a-z]+)?)(?:\s*(?:through|thru|to|and|-|–|—)\s*(\d{1,3}|[a-z]+(?:\s+[a-z]+)?))?(?:\s|$|[,.!?;:])/i
         const bareChapterVerseMatch = afterBook.match(bareChapterVersePattern)
         if (bareChapterVerseMatch) {
             const chapter = this.parseNumber(bareChapterVerseMatch[1])
@@ -1392,4 +1409,178 @@ function levenshtein(a: string, b: string, maxDist: number): number {
     }
 
     return prev[b.length]
+}
+
+/**
+ * Rewrite spoken number words as digits so every reference pattern can work on one
+ * uniform shape. Handles compounds ("thirty one" → 31), hundreds ("one hundred and
+ * nineteen" → 119) and the shorthand people actually use for Psalms ("one nineteen"
+ * → 119). Ordinals are included because chapters are often spoken that way ("the
+ * third chapter").
+ *
+ * Only ever applied to the text AFTER a matched book name, so numbered-book words
+ * like "first" in "First John" are never touched.
+ */
+export function normalizeSpokenNumbers(text: string): string {
+    const words = text.split(/(\s+)/) // keep the separators so spacing survives
+    const out: string[] = []
+
+    let i = 0
+    while (i < words.length) {
+        const token = words[i]
+        if (/^\s+$/.test(token)) {
+            out.push(token)
+            i++
+            continue
+        }
+
+        const consumed = consumeNumberPhrase(words, i)
+        if (consumed) {
+            out.push(String(consumed.value))
+            i = consumed.nextIndex
+            continue
+        }
+
+        out.push(token)
+        i++
+    }
+
+    return out.join("")
+}
+
+/** Longest-first match of a spoken number starting at `index` (word tokens only). */
+function consumeNumberPhrase(words: string[], index: number): { value: number; nextIndex: number } | null {
+    // collect up to 5 word tokens (ignoring whitespace) starting here
+    const tokens: { word: string; index: number }[] = []
+    for (let i = index; i < words.length && tokens.length < 5; i++) {
+        if (/^\s+$/.test(words[i])) continue
+        tokens.push({ word: words[i], index: i })
+    }
+    if (!tokens.length) return null
+
+    for (let take = tokens.length; take >= 1; take--) {
+        const slice = tokens.slice(0, take)
+        const phrase = slice
+            .map((t) => t.word.toLowerCase().replace(/[.,;:!?]+$/, ""))
+            .filter(Boolean)
+            .join(" ")
+        if (!phrase) continue
+
+        const value = spokenPhraseToNumber(phrase)
+        if (value === null) continue
+
+        // keep any trailing punctuation attached to the last consumed word
+        const last = slice[slice.length - 1]
+        const trailing = last.word.match(/[.,;:!?]+$/)?.[0] || ""
+        return { value: trailing ? Number(`${value}`) : value, nextIndex: last.index + 1 }
+    }
+
+    return null
+}
+
+/** ORDINALS that map onto their cardinal value ("third" → 3, "twenty third" → 23). */
+const ORDINAL_WORDS: { [key: string]: number } = {
+    first: 1,
+    second: 2,
+    third: 3,
+    fourth: 4,
+    fifth: 5,
+    sixth: 6,
+    seventh: 7,
+    eighth: 8,
+    ninth: 9,
+    tenth: 10,
+    eleventh: 11,
+    twelfth: 12,
+    thirteenth: 13,
+    fourteenth: 14,
+    fifteenth: 15,
+    sixteenth: 16,
+    seventeenth: 17,
+    eighteenth: 18,
+    nineteenth: 19,
+    twentieth: 20,
+    thirtieth: 30,
+    fortieth: 40,
+    fiftieth: 50,
+    sixtieth: 60,
+    seventieth: 70,
+    eightieth: 80,
+    ninetieth: 90
+}
+
+/**
+ * ASR homophones ("to" for two, "for" for four) live in SPOKEN_NUMBERS because a regex
+ * that has already identified a number slot can safely resolve them. The normalizer runs
+ * before that decision, so rewriting them here would corrupt ordinary words - "verses 16
+ * to 18" would become "verses 16 2 18" and stop being a range.
+ */
+const NUMBER_HOMOPHONES = new Set(["to", "too", "for", "fore", "won", "ate", "a", "i"])
+
+function wordValue(word: string): number | null {
+    if (NUMBER_HOMOPHONES.has(word)) return null
+    if (SPOKEN_NUMBERS[word] !== undefined) return SPOKEN_NUMBERS[word]
+    if (ORDINAL_WORDS[word] !== undefined) return ORDINAL_WORDS[word]
+    return null
+}
+
+/** Value of a complete spoken number phrase, or null when it is not one. */
+function spokenPhraseToNumber(phrase: string): number | null {
+    const words = phrase.split(" ")
+    if (words.length === 1) return wordValue(words[0])
+
+    // hundreds: "one hundred and nineteen", "a hundred nineteen", "hundred five"
+    const hundredIndex = words.indexOf("hundred")
+    if (hundredIndex !== -1) {
+        const prefix = words.slice(0, hundredIndex).filter((w) => w !== "a")
+        if (prefix.length > 1) return null
+        const hundreds = prefix.length === 0 ? 1 : (wordValue(prefix[0]) ?? 0)
+        if (hundreds < 1 || hundreds > 9) return null
+
+        const rest = words.slice(hundredIndex + 1).filter((w) => w !== "and")
+        if (!rest.length) return hundreds * 100
+        const restValue = spokenPhraseToNumber(rest.join(" "))
+        if (restValue === null || restValue <= 0 || restValue >= 100) return null
+        return hundreds * 100 + restValue
+    }
+
+    if (words.length !== 2) return null
+
+    const [firstWord, secondWord] = words
+    const tens = wordValue(firstWord)
+    const ones = wordValue(secondWord)
+    if (tens === null || ones === null) return null
+
+    // "twenty three" → 23
+    if (tens >= 20 && tens % 10 === 0 && ones >= 1 && ones < 10) return tens + ones
+    // "one nineteen" → 119 (how people say Psalm 119)
+    if (tens === 1 && ones >= 10 && ones < 100) return 100 + ones
+
+    return null
+}
+
+/**
+ * Preachers often put the book last: "the third chapter of John", "chapter three of
+ * John", "verse sixteen of John chapter three". Rewriting those into the normal
+ * "Book chapter N verse M" order lets the ordinary patterns handle them, instead of
+ * every pattern needing an inverted twin.
+ *
+ * Book names are matched loosely here (one or two words, optionally preceded by a
+ * number word for "first john"); a wrong guess simply produces text that no pattern
+ * matches, which is the same as not detecting anything.
+ */
+export function reorderOfPhrasing(text: string): string {
+    const BOOK = "((?:first|second|third|1st|2nd|3rd|[123])?\\s*[A-Za-z]+)"
+
+    return (
+        text
+            // "verse sixteen of John chapter three" → "John chapter three verse sixteen"
+            .replace(new RegExp(`\\b(?:verse|verses|vs|v)\\.?\\s+([\\w\\s-]+?)\\s+of\\s+${BOOK}\\s*,?\\s*(chapter|chap|ch)\\.?\\s+([\\w-]+(?:\\s+[\\w-]+)?)`, "gi"), "$2 chapter $4 verse $1")
+            // "the third chapter of John" → "John chapter third"
+            .replace(new RegExp(`\\b(?:the\\s+)?([\\w-]+)\\s+chapter\\s+of\\s+${BOOK}`, "gi"), "$2 chapter $1")
+            // "chapter three of John" → "John chapter three"
+            .replace(new RegExp(`\\bchapter\\s+([\\w-]+(?:\\s+[\\w-]+)?)\\s+of\\s+${BOOK}`, "gi"), "$2 chapter $1")
+            // "the twenty third Psalm" → "Psalm twenty third" (only when it really is a number)
+            .replace(/\b(?:the\s+)?([a-z-]+(?:\s+[a-z-]+)?)\s+(psalms?)\b/gi, (whole, words: string, psalm: string) => (spokenPhraseToNumber(words.toLowerCase()) === null ? whole : `${psalm} ${words}`))
+    )
 }

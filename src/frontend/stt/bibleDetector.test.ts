@@ -844,4 +844,47 @@ describe("BibleDetector", () => {
             expect(detector.processTranscript("that verse again")).toEqual([])
         })
     })
+
+    describe("natural preacher phrasings", () => {
+        // Every case here came from a phrasing sweep that the detector originally failed.
+        const expectRef = (utterance: string, expected: string) => {
+            const detector = new BibleDetector()
+            const [detection] = detector.processTranscript(utterance, { isFinal: true })
+            const actual = detection ? `${detection.bookName} ${detection.chapter}:${detection.verseStart}${detection.verseEnd ? "-" + detection.verseEnd : ""}` : ""
+            expect(actual).toBe(expected)
+        }
+
+        describe("compound spoken numbers", () => {
+            it("keeps both words of a compound verse", () => expectRef("Isaiah forty verse thirty one", "Isaiah 40:31"))
+            it("handles a compound after a chapter cue", () => expectRef("Acts chapter two verse thirty eight", "Acts 2:38"))
+            it("handles bare chapter and compound verse", () => expectRef("Romans eight twenty eight", "Romans 8:28"))
+            it("handles another bare compound", () => expectRef("Galatians five twenty two", "Galatians 5:22"))
+            it("handles a spoken hundred", () => expectRef("Psalm one hundred and nineteen verse one hundred and five", "Psalms 119:105"))
+        })
+
+        describe("book named after the chapter", () => {
+            it("reads an ordinal chapter before the book", () => expectRef("turn with me to the third chapter of John verse sixteen", "John 3:16"))
+            it("reads a cardinal chapter before the book", () => expectRef("look at chapter three of John verse sixteen", "John 3:16"))
+            it("reads a verse before the book", () => expectRef("verse sixteen of John chapter three", "John 3:16"))
+            it("reads an ordinal psalm", () => expectRef("the twenty third Psalm", "Psalms 23:1"))
+        })
+
+        describe("joiners and ranges", () => {
+            it("treats and as a range separator", () => expectRef("Ephesians chapter two verses eight and nine", "Ephesians 2:8-9"))
+            it("treats and as a range separator without cues", () => expectRef("Proverbs three five and six", "Proverbs 3:5-6"))
+            it("allows and between the chapter and the verse", () => expectRef("in John, chapter three, and verse sixteen", "John 3:16"))
+            it("still reads a plain range", () => expectRef("John chapter three verses sixteen to eighteen", "John 3:16-18"))
+        })
+
+        describe("single chapter books", () => {
+            it("assumes chapter one for Jude", () => expectRef("the book of Jude verse three", "Jude 1:3"))
+            it("assumes chapter one for Philemon", () => expectRef("Philemon verse six", "Philemon 1:6"))
+        })
+
+        describe("still ignores ordinary speech", () => {
+            it("ignores a head count", () => expectRef("we had about five people come forward", ""))
+            it("ignores a service time", () => expectRef("the service starts at eleven thirty", ""))
+            it("ignores praise without a reference", () => expectRef("he was a good man of faith", ""))
+        })
+    })
 })
