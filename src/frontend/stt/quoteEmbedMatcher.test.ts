@@ -16,24 +16,9 @@ describe("confidenceThresholdForSource", () => {
     })
 
     it("gates detections source-aware", () => {
-        expect(
-            passesConfidenceThreshold(
-                { id: "1", bookNumber: 43, bookName: "John", chapter: 3, verseStart: 16, confidence: 0.88, source: "direct", transcriptSnippet: "John 3:16", detectedAt: 0 },
-                settings
-            )
-        ).toBe(true)
-        expect(
-            passesConfidenceThreshold(
-                { id: "2", bookNumber: 43, bookName: "John", chapter: 3, verseStart: 16, confidence: 0.88, source: "quotation", transcriptSnippet: "for god so loved", detectedAt: 0 },
-                settings
-            )
-        ).toBe(false)
-        expect(
-            passesConfidenceThreshold(
-                { id: "3", bookNumber: 43, bookName: "John", chapter: 3, verseStart: 16, confidence: 0.92, source: "quotation", transcriptSnippet: "for god so loved", detectedAt: 0 },
-                settings
-            )
-        ).toBe(true)
+        expect(passesConfidenceThreshold({ id: "1", bookNumber: 43, bookName: "John", chapter: 3, verseStart: 16, confidence: 0.88, source: "direct", transcriptSnippet: "John 3:16", detectedAt: 0 }, settings)).toBe(true)
+        expect(passesConfidenceThreshold({ id: "2", bookNumber: 43, bookName: "John", chapter: 3, verseStart: 16, confidence: 0.88, source: "quotation", transcriptSnippet: "for god so loved", detectedAt: 0 }, settings)).toBe(false)
+        expect(passesConfidenceThreshold({ id: "3", bookNumber: 43, bookName: "John", chapter: 3, verseStart: 16, confidence: 0.92, source: "quotation", transcriptSnippet: "for god so loved", detectedAt: 0 }, settings)).toBe(true)
     })
 })
 
@@ -79,10 +64,7 @@ describe("hybrid n-gram re-rank", () => {
 
         const transcript = "for god so loved the world that he gave his only son"
         // Put the wrong lexical winner first — hybrid should still pick John 3:16.
-        const hit = matcher.rerank(transcript, [
-            { ...psalm23, weightedScore: 9, coverage: 0.8, overlap: 4 },
-            john16
-        ])
+        const hit = matcher.rerank(transcript, [{ ...psalm23, weightedScore: 9, coverage: 0.8, overlap: 4 }, john16])
         expect(hit).not.toBeNull()
         expect(hit!.bookName).toBe("John")
         expect(hit!.chapter).toBe(3)
