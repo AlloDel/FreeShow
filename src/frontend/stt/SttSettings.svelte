@@ -70,7 +70,6 @@
     $: currentModelDownloaded = activeModel?.downloaded || false
     $: downloadPercent = $sttStatus.downloadTotal > 0 ? Math.min(100, Math.round(($sttStatus.downloadProgress / $sttStatus.downloadTotal) * 100)) : 0
     $: isDev = !!importMetaEnv.env?.DEV
-    $: isWhisperModel = ($sttSettings.model || "").includes("whisper") || activeModel?.kind === "offline-whisper"
 </script>
 
 <div class="stt-settings">
@@ -95,9 +94,6 @@
                 <option value="nemotron-en-int8">NVIDIA Nemotron (English)</option>
             {/if}
         </select>
-        {#if isWhisperModel}
-            <div class="stt-model-warn">Whisper needs more RAM (~1 GB model) and is utterance-based — keep Nemotron as the default for short Bible commands.</div>
-        {/if}
     </div>
 
     <!-- Progress bar shown when auto-downloading -->

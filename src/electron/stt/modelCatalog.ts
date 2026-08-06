@@ -1,20 +1,15 @@
 // ----- FreeShow STT — Pure model catalog (no Electron) -----
 // Shared by modelManager, worker process, and unit tests.
+// Product decision: Nemotron streaming only — Whisper (sherpa offline / whisper.cpp)
+// is parked; it does not match Auto-Bible latency needs.
 
-export type SttModelKind = "streaming-transducer" | "offline-whisper"
+export type SttModelKind = "streaming-transducer"
 
 /** Paths for streaming transducer models (encoder/decoder/joiner/tokens). */
 export interface SherpaModelPaths {
     encoder: string
     decoder: string
     joiner: string
-    tokens: string
-}
-
-/** Paths for offline Whisper models (no joiner). */
-export interface WhisperModelPaths {
-    encoder: string
-    decoder: string
     tokens: string
 }
 
@@ -25,13 +20,12 @@ export interface SttModelCatalogEntry {
     description: string
     kind: SttModelKind
     baseUrl: string
-    /** Joiner required for streaming-transducer; omitted for offline-whisper. */
-    files: { encoder: string; decoder: string; tokens: string; joiner?: string }
+    files: { encoder: string; decoder: string; tokens: string; joiner: string }
 }
 
 /**
  * Downloadable ASR models.
- * Default remains Nemotron streaming; Whisper is optional (higher RAM, utterance-based).
+ * Sole shipping model: NVIDIA Nemotron streaming transducer.
  */
 export const STT_MODEL_CATALOG: SttModelCatalogEntry[] = [
     {
@@ -47,20 +41,6 @@ export const STT_MODEL_CATALOG: SttModelCatalogEntry[] = [
             joiner: "joiner.int8.onnx",
             tokens: "tokens.txt"
         }
-    },
-    {
-        id: "whisper-large-v3-turbo-int8",
-        displayName: "Whisper Large v3 Turbo (optional)",
-        size: 990_000_000,
-        description: "Higher RAM, utterance-based, better long quotes; ~1 GB. Not the default.",
-        kind: "offline-whisper",
-        // sherpa-compatible int8 encoder/decoder from soniqo (OpenAI whisper-large-v3-turbo export)
-        baseUrl: "https://huggingface.co/soniqo/Whisper-Large-v3-Turbo-ONNX/resolve/main",
-        files: {
-            encoder: "turbo-encoder.int8.onnx",
-            decoder: "turbo-decoder.int8.onnx",
-            tokens: "turbo-tokens.txt"
-        }
     }
 ]
 
@@ -75,14 +55,10 @@ export function getModelKind(modelId: string): SttModelKind | null {
     return getCatalogEntry(modelId)?.kind ?? null
 }
 
-/** File names required on disk for a catalog entry (kind-aware). */
+/** File names required on disk for a catalog entry. */
 export function requiredModelFileNames(entry: SttModelCatalogEntry): string[] {
     const { encoder, decoder, tokens, joiner } = entry.files
-    if (entry.kind === "streaming-transducer") {
-        if (!joiner) throw new Error(`Model ${entry.id} is streaming-transducer but missing joiner`)
-        return [encoder, decoder, joiner, tokens]
-    }
-    return [encoder, decoder, tokens]
+    return [encoder, decoder, joiner, tokens]
 }
 
 /** Whether `modelId` is a known catalog id (settings restore). */

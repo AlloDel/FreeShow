@@ -7,17 +7,17 @@ import { sttSettings, type SttSettingsData } from "./sttStore"
 
 const STORAGE_KEY = "freeshow_stt_settings_v1"
 const DEBOUNCE_MS = 500
-/** Default streaming model (Nemotron remains the recommended default). */
+/** Default streaming model (Nemotron — sole shipping ASR). */
 const DEFAULT_MODEL_ID = "nemotron-en-int8"
 /** Keep in sync with src/electron/stt/modelCatalog.ts */
-const KNOWN_MODEL_IDS = new Set(["nemotron-en-int8", "whisper-large-v3-turbo-int8"])
+const KNOWN_MODEL_IDS = new Set(["nemotron-en-int8"])
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 let installed = false
 
 function normalizeSavedSettings(parsed: Partial<SttSettingsData>): Partial<SttSettingsData> {
     const next: Partial<SttSettingsData> = { ...parsed }
-    // Remap unknown model ids; allow Whisper when user previously selected it.
+    // Remap unknown / retired model ids (e.g. former Whisper catalog entries) to Nemotron.
     if (typeof parsed.model !== "string" || !KNOWN_MODEL_IDS.has(parsed.model)) {
         next.model = DEFAULT_MODEL_ID
     }

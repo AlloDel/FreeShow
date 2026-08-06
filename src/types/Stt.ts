@@ -60,8 +60,8 @@ export interface SttStatus {
     downloadTotal: number
 }
 
-/** ASR model family — streaming transducer (Nemotron) vs offline Whisper. */
-export type SttModelKind = "streaming-transducer" | "offline-whisper"
+/** ASR model family — Nemotron streaming transducer (sole shipping engine). */
+export type SttModelKind = "streaming-transducer"
 
 /** Information about a downloadable STT model. */
 export interface ModelInfo {

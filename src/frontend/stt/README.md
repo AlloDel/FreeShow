@@ -6,9 +6,8 @@ capture, the Bible-reference detector, quote-by-content matching, the Svelte UI
 pipeline.
 
 **All Bible detection is frontend-only.** The Electron side is a pure speech-to-text transcriber
-(Nemotron streaming or optional Whisper via sherpa-onnx, in a forked worker) with no concept of
-scripture; every reference-parsing and quotation-matching decision is made here
-(`bibleDetector.ts`, `quoteMatcher.ts`, `quoteEmbedMatcher.ts`).
+(Nemotron streaming via sherpa-onnx) with no concept of scripture; every reference-parsing and
+quotation-matching decision is made here (`bibleDetector.ts`, `quoteMatcher.ts`, `quoteEmbedMatcher.ts`).
 
 ## Data flow
 
@@ -19,7 +18,7 @@ scripture; every reference-parsing and quotation-matching decision is made here
  AudioWorklet (sttManager.ts)
      │  16 kHz mono PCM, Int16, 1024-sample chunks (~64 ms)
      ▼
-IPC "STT" / AUDIO_DATA  ──────────────►  Electron worker (fork) → SttEngine / Whisper
+IPC "STT" / AUDIO_DATA  ──────────────►  Electron SttEngine (Nemotron; optional worker fork)
                                                 │  Silero VAD; hotwords quarantined (disabled)
      ◄────────────────────────────────────────┘
 IPC "STT" / TRANSCRIPT
@@ -149,13 +148,13 @@ projected/skipped (reason), quote-index ready, errors.
 
 Rough end-to-end budget for a short spoken reference (“John 3:16”) with auto-show on:
 
-| Stage | Budget |
-| --- | --- |
-| Mic → AudioWorklet chunk (~64 ms @ 16 kHz) | ~64 ms |
-| IPC + VAD open + first partial | ~150–300 ms |
-| Partial stabilize → pending commit delay | ~partial commit delay in `sttManager` |
-| Final + detection → `playScripture` | ~50–150 ms |
-| **Spoken end → verse on screen** | **~0.5–1.5 s** typical |
+| Stage                                      | Budget                                |
+| ------------------------------------------ | ------------------------------------- |
+| Mic → AudioWorklet chunk (~64 ms @ 16 kHz) | ~64 ms                                |
+| IPC + VAD open + first partial             | ~150–300 ms                           |
+| Partial stabilize → pending commit delay   | ~partial commit delay in `sttManager` |
+| Final + detection → `playScripture`        | ~50–150 ms                            |
+| **Spoken end → verse on screen**           | **~0.5–1.5 s** typical                |
 
 Incomplete command merge (`next` + `verse`) waits up to `PENDING_COMMAND_TTL_MS` (3500 ms) for
 the continuation; bare `next`/`previous`/`back` expire with **no action** (no auto-advance).
@@ -197,7 +196,7 @@ npm run test:unit -- src/frontend/stt/eval/
 - `sttDebug.ts` — renderer debug helpers; formats lines and forwards to main via `DEBUG_LOG`.
 - `bibleDetector.ts` / `bibleDetector.test.ts` — the unified reference detector and its tests.
 - `eval/` — fixture-driven regression harness for detector + pending-command merge;
-  `whisperVsNemotron.md` notes eval before ever making Whisper the default.
+  `whisperVsNemotron.md` records why Whisper was dropped from the product catalog.
 - `quoteMatcher.ts` / `quoteMatcher.test.ts` — progressive quote-by-content matching.
 - `quoteEmbedMatcher.ts` / `quoteEmbedMatcher.test.ts` — pluggable hybrid re-rank (n-gram Jaccard).
 - `confidenceGate.ts` — source-aware confidence thresholds (refs vs quotes).

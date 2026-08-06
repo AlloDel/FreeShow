@@ -4,17 +4,16 @@
 // Messages: { type: "start" | "audio" | "stop" } → transcripts via process.send.
 
 import type { TranscriptEvent } from "../../types/Stt"
-import type { SherpaModelPaths, SttModelKind, WhisperModelPaths } from "./modelCatalog"
+import type { SherpaModelPaths, SttModelKind } from "./modelCatalog"
 import { float32FromIpcPcm } from "./pcmIpc"
 import { SttEngine } from "./sttEngine"
-import { WhisperOfflineEngine } from "./whisperOfflineEngine"
 
 export type SttWorkerInMessage =
     | {
           type: "start"
           modelId: string
           kind: SttModelKind
-          paths: SherpaModelPaths | WhisperModelPaths
+          paths: SherpaModelPaths
           vadModelPath: string
           /** Hotword biasing is experimental/disabled — host should pass null. */
           hotwordsFile?: string | null
@@ -25,9 +24,7 @@ export type SttWorkerInMessage =
 
 export type SttWorkerOutMessage = { type: "ready" } | { type: "transcript"; event: TranscriptEvent } | { type: "error"; error: string } | { type: "stopped" }
 
-type EngineLike = SttEngine | WhisperOfflineEngine
-
-let engine: EngineLike | null = null
+let engine: SttEngine | null = null
 
 function send(msg: SttWorkerOutMessage): void {
     if (typeof process.send === "function") process.send(msg)
@@ -46,7 +43,7 @@ function stopEngine(): void {
 function startEngine(msg: Extract<SttWorkerInMessage, { type: "start" }>): void {
     stopEngine()
 
-    const next: EngineLike = msg.kind === "offline-whisper" ? new WhisperOfflineEngine() : new SttEngine()
+    const next = new SttEngine()
 
     next.on("transcript", (event: TranscriptEvent) => {
         send({ type: "transcript", event })
@@ -56,12 +53,7 @@ function startEngine(msg: Extract<SttWorkerInMessage, { type: "start" }>): void 
     })
 
     // Hotwords quarantined: never pass a biasing file into engine start by default.
-    const hotwordsFile = null
-    if (msg.kind === "offline-whisper") {
-        ;(next as WhisperOfflineEngine).start(msg.paths as WhisperModelPaths, msg.vadModelPath, hotwordsFile)
-    } else {
-        ;(next as SttEngine).start(msg.paths as SherpaModelPaths, msg.vadModelPath, hotwordsFile)
-    }
+    next.start(msg.paths, msg.vadModelPath, null)
 
     engine = next
     send({ type: "ready" })

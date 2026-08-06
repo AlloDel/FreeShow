@@ -6,19 +6,19 @@ import { type ChildProcess, fork } from "child_process"
 import { EventEmitter } from "events"
 import path from "path"
 import type { TranscriptEvent } from "../../types/Stt"
-import type { SherpaModelPaths, SttModelKind, WhisperModelPaths } from "./modelCatalog"
+import type { SherpaModelPaths, SttModelKind } from "./modelCatalog"
 import type { SttWorkerInMessage, SttWorkerOutMessage } from "./sttWorkerProcess"
 
 export interface SttWorkerStartOptions {
     modelId: string
     kind: SttModelKind
-    paths: SherpaModelPaths | WhisperModelPaths
+    paths: SherpaModelPaths
     vadModelPath: string
 }
 
 /**
  * Host that owns a forked STT worker child.
- * Emits the same "transcript" events as SttEngine / WhisperOfflineEngine.
+ * Emits the same "transcript" events as SttEngine.
  */
 export class SttWorkerHost extends EventEmitter {
     isRunning = false

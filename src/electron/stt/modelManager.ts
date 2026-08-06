@@ -1,5 +1,5 @@
 // ----- FreeShow STT — Model Manager -----
-// Downloads and manages sherpa-onnx ASR models (streaming transducer + optional Whisper).
+// Downloads and manages sherpa-onnx ASR models (Nemotron streaming transducer).
 // Models are stored in userData/stt-models/<modelId>/ — never committed to the repo.
 
 import { app } from "electron"
@@ -7,17 +7,9 @@ import fs from "fs"
 import https from "https"
 import path from "path"
 import type { ModelInfo } from "../../types/Stt"
-import {
-    DEFAULT_STT_MODEL_ID,
-    getCatalogEntry,
-    getModelKind,
-    requiredModelFileNames,
-    STT_MODEL_CATALOG,
-    type SherpaModelPaths,
-    type WhisperModelPaths
-} from "./modelCatalog"
+import { DEFAULT_STT_MODEL_ID, getCatalogEntry, getModelKind, requiredModelFileNames, STT_MODEL_CATALOG, type SherpaModelPaths } from "./modelCatalog"
 
-export type { SherpaModelPaths, WhisperModelPaths }
+export type { SherpaModelPaths }
 export { getModelKind, DEFAULT_STT_MODEL_ID }
 
 /** Default catalogued model (streaming Nemotron). */
@@ -51,8 +43,6 @@ export async function ensureVadModel(): Promise<string> {
 }
 
 function isModelDownloaded(modelId: string): boolean {
-    const kind = getModelKind(modelId)
-    if (kind === "offline-whisper") return getWhisperModelPaths(modelId) !== null
     return getModelPaths(modelId) !== null
 }
 
@@ -66,24 +56,6 @@ export function getModelPaths(modelId: string): SherpaModelPaths | null {
         encoder: path.join(dir, def.files.encoder),
         decoder: path.join(dir, def.files.decoder),
         joiner: path.join(dir, def.files.joiner),
-        tokens: path.join(dir, def.files.tokens)
-    }
-
-    for (const p of Object.values(paths)) {
-        if (!fs.existsSync(p) || fs.statSync(p).size === 0) return null
-    }
-    return paths
-}
-
-/** Absolute paths for an offline Whisper model, or null if incomplete. */
-export function getWhisperModelPaths(modelId: string): WhisperModelPaths | null {
-    const def = getCatalogEntry(modelId)
-    if (!def || def.kind !== "offline-whisper") return null
-
-    const dir = path.join(getModelsDir(), def.id)
-    const paths: WhisperModelPaths = {
-        encoder: path.join(dir, def.files.encoder),
-        decoder: path.join(dir, def.files.decoder),
         tokens: path.join(dir, def.files.tokens)
     }
 

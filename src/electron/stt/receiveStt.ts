@@ -6,13 +6,12 @@
 import type { IpcMainEvent } from "electron"
 import type { SttMessage, SttStartPayload, TranscriptEvent } from "../../types/Stt"
 import { toApp } from "../index"
-import { deleteModel, downloadModel, ensureVadModel, getActiveModelId, getModelKind, getModelPaths, getModels, getWhisperModelPaths, setActiveModel } from "./modelManager"
+import { deleteModel, downloadModel, ensureVadModel, getActiveModelId, getModelKind, getModelPaths, getModels, setActiveModel } from "./modelManager"
 import { appendSttDebugLog, getSttDebugLogPath } from "./sttDebugLog"
 import { SttEngine } from "./sttEngine"
 import { SttWorkerHost } from "./sttWorkerHost"
-import { WhisperOfflineEngine } from "./whisperOfflineEngine"
 
-type SttRuntime = SttWorkerHost | SttEngine | WhisperOfflineEngine
+type SttRuntime = SttWorkerHost | SttEngine
 
 let runtime: SttRuntime | null = null
 /** Mirrors renderer `sttSettings.debugLogging` for main-originated session/error lines. */
@@ -93,7 +92,7 @@ async function startStt(payload: SttStartPayload): Promise<void> {
         return
     }
 
-    const paths = kind === "offline-whisper" ? getWhisperModelPaths(modelId) : getModelPaths(modelId)
+    const paths = getModelPaths(modelId)
     if (!paths) {
         maybeDebug(`error model_not_downloaded model=${modelId}`)
         sendToApp("TRANSCRIPT", { type: "error", error: `Model not downloaded: ${modelId}. Open settings to download it.` })
@@ -135,11 +134,11 @@ async function startStt(payload: SttStartPayload): Promise<void> {
             }
         }
 
-        // In-process (default) — same path that produced transcripts before the worker regression.
-        const engine = kind === "offline-whisper" ? new WhisperOfflineEngine() : new SttEngine()
+        // In-process (default) — Nemotron streaming transducer only.
+        const engine = new SttEngine()
         bindTranscript(engine)
         // Quarantined: pass null — bible hotwords biasing is experimental/disabled.
-        engine.start(paths as any, vadModelPath, null)
+        engine.start(paths, vadModelPath, null)
         runtime = engine
         usingWorker = false
         setActiveModel(modelId)
