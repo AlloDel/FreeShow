@@ -144,7 +144,13 @@ describe("BibleDetector", () => {
     })
 
     describe("previous verse command", () => {
-        it("re-fires the most recent detection", () => {
+        it("steps back one verse on 'previous verse'", () => {
+            detector.processTranscript("John 3:16")
+            const [d] = detector.processTranscript("previous verse")
+            expect(d).toMatchObject({ bookName: "John", chapter: 3, verseStart: 15 })
+        })
+
+        it("re-fires the most recent detection on 'that verse again'", () => {
             detector.processTranscript("John 3:16")
             const [d] = detector.processTranscript("let's go back to that verse again")
             expect(d).toMatchObject({ bookName: "John", chapter: 3, verseStart: 16 })
@@ -164,6 +170,26 @@ describe("BibleDetector", () => {
             vi.advanceTimersByTime(30_000)
             const [d] = detector.processTranscript("verse 17")
             expect(d).toMatchObject({ bookName: "John", chapter: 3, verseStart: 17 })
+        })
+
+        it("does not treat long commentary containing 'next verse' as a command", () => {
+            detector.processTranscript("Genesis 3:21")
+            expect(detector.processTranscript("This is very good because I realize I was actually listening to me when I read the next verse without having to say next verse")).toEqual([])
+        })
+
+        it("still accepts short trailing 'okay that works next verse'", () => {
+            detector.processTranscript("Genesis 4:1")
+            const [d] = detector.processTranscript("Okay, that works next verse")
+            expect(d).toMatchObject({ bookName: "Genesis", chapter: 4, verseStart: 2 })
+        })
+
+        it("rejects impossible Genesis 3:50", () => {
+            expect(detector.processTranscript("Genesis chapter 3 verse 50")).toEqual([])
+        })
+
+        it("stops next verse at the end of the chapter", () => {
+            detector.processTranscript("Genesis 3:24")
+            expect(detector.processTranscript("next verse")).toEqual([])
         })
     })
 
@@ -292,6 +318,34 @@ describe("BibleDetector", () => {
         it("resolves Jenesis 1:1 as Genesis", () => {
             const [d] = detector.processTranscript("Jenesis 1:1")
             expect(d).toMatchObject({ bookName: "Genesis", chapter: 1, verseStart: 1 })
+        })
+
+        it("resolves Genes (ASR truncation) with chapter and verse", () => {
+            const [d] = detector.processTranscript("Genes 3 15")
+            expect(d).toMatchObject({ bookName: "Genesis", chapter: 3, verseStart: 15 })
+        })
+
+        it("resolves Book of Genes 3 15 from live session log", () => {
+            const [d] = detector.processTranscript("Book of Genes 3 15")
+            expect(d).toMatchObject({ bookName: "Genesis", chapter: 3, verseStart: 15 })
+        })
+
+        it("resolves Genes chapter 3 ver 15 (truncated verse cue)", () => {
+            const [d] = detector.processTranscript("Genes chapter 3 ver 15")
+            expect(d).toMatchObject({ bookName: "Genesis", chapter: 3, verseStart: 15 })
+        })
+
+        it("holds bare Genes as pending book then completes with chapter 3", () => {
+            expect(detector.processTranscript("Genes")).toEqual([])
+            const [d] = detector.processTranscript("chapter 3")
+            expect(d).toMatchObject({ bookName: "Genesis", chapter: 3, verseStart: 1, source: "contextual" })
+        })
+
+        it("retargets chapter when follow-up says chapter N verse M (Isaiah 53 vs truncated 5)", () => {
+            const [first] = detector.processTranscript("Isaiah chapter 5")
+            expect(first).toMatchObject({ bookName: "Isaiah", chapter: 5, verseStart: 1 })
+            const [d] = detector.processTranscript("Chapter 53 verse 5")
+            expect(d).toMatchObject({ bookName: "Isaiah", chapter: 53, verseStart: 5 })
         })
 
         it("resolves First Cornithians 13 as 1 Corinthians", () => {
@@ -443,11 +497,11 @@ describe("BibleDetector", () => {
             expect(d).toMatchObject({ bookName: "John", chapter: 3, verseStart: 12 })
         })
 
-        it("merges final 'previous' then final 'verse' into previous verse (re-fire)", () => {
+        it("merges final 'previous' then final 'verse' into previous verse (step back)", () => {
             detector.processTranscript("John 3:16")
             expect(detector.processTranscript("previous", { isFinal: true })).toEqual([])
             const [d] = detector.processTranscript("verse", { isFinal: true })
-            expect(d).toMatchObject({ bookName: "John", chapter: 3, verseStart: 16 })
+            expect(d).toMatchObject({ bookName: "John", chapter: 3, verseStart: 15 })
         })
 
         it("merges final 'next' then final 'chapter' into next chapter (not next verse)", () => {
@@ -674,6 +728,14 @@ describe("BibleDetector", () => {
 
         it("matches 'use the New International Version'", () => {
             expect(extractTranslationCommand("use the New International Version")).toBe("new international version")
+        })
+
+        it("matches 'switch back to King James version'", () => {
+            expect(extractTranslationCommand("Switch back to King James version")).toBe("king james version")
+        })
+
+        it("matches 'go back to KJV'", () => {
+            expect(extractTranslationCommand("go back to KJV")).toBe("kjv")
         })
 
         it("matches 'King James version'", () => {

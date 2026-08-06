@@ -28,11 +28,12 @@ export function getAvailableBibleVersions(): { id: string; name: string }[] {
 
 /**
  * Acronym → full spoken names. Used so "niv" resolves against an installed
- * scripture named "New International Version" (no "NIV" token in the title).
+ * scripture named "New International Version" (no "NIV" token in the title),
+ * and so "king james" resolves against a short "KJV" display name.
  */
 const BIBLE_ALIAS_EXPANSIONS: Record<string, string[]> = {
     niv: ["new international version", "new international"],
-    kjv: ["king james version", "king james"],
+    kjv: ["king james version", "king james", "king james authorised version", "king james authorized version", "authorised version", "authorized version"],
     esv: ["english standard version", "english standard"],
     nkjv: ["new king james version", "new king james"],
     nlt: ["new living translation", "new living"],
@@ -51,9 +52,9 @@ const BIBLE_ALIAS_EXPANSIONS: Record<string, string[]> = {
 
 /**
  * Match a spoken translation alias (from extractTranslationCommand) against
- * installed FreeShow scriptures. Prefers whole-token / abbreviation hits;
- * expands acronyms (NIV → New International Version); skips collections.
- * Returns null when nothing available matches.
+ * installed FreeShow scriptures. Accepts abbreviations (KJV) and full names
+ * (King James / King James Version) according to what is installed.
+ * Skips collections. Returns null when nothing available matches.
  */
 export function resolveSpokenBibleVersion(spokenAlias: string, versions?: { id: string; name: string }[]): { id: string; name: string } | null {
     const alias = spokenAlias.toLowerCase().trim()
@@ -76,18 +77,38 @@ export function resolveSpokenBibleVersion(spokenAlias: string, versions?: { id: 
         const exact = list.find((v) => v.name.toLowerCase().trim() === candidate)
         if (exact) return exact
 
-        // 2) Name contains the alias as a whole token (e.g. "KJV" in "King James (KJV)")
-        const tokenHits = list.filter((v) => tokenRe(candidate).test(v.name.toLowerCase()))
-        const tokenPick = pickFromHits(tokenHits)
-        if (tokenPick) return tokenPick
+        // 2) Single-token alias as a whole token in the name (e.g. "KJV" in "King James (KJV)")
+        if (!candidate.includes(" ")) {
+            const tokenHits = list.filter((v) => tokenRe(candidate).test(v.name.toLowerCase()))
+            const tokenPick = pickFromHits(tokenHits)
+            if (tokenPick) return tokenPick
+        }
 
-        // 3) Alias expands to words present in the name ("king james" → "King James Version")
+        // 3) Contiguous phrase in the display name ("king james" → "King James Version").
+        //    Skip hits qualified by an extra leading word the speaker did not say
+        //    (so "king james" → KJV, not "New King James").
+        const phraseHits = list
+            .map((v) => {
+                const n = v.name.toLowerCase()
+                const idx = n.indexOf(candidate)
+                if (idx < 0) return null
+                const before = n.slice(0, idx)
+                if (/\bnew\s+$/.test(before) && !candidate.startsWith("new")) return null
+                return { v, idx, nameLen: n.length }
+            })
+            .filter((x): x is { v: { id: string; name: string }; idx: number; nameLen: number } => !!x)
+            .sort((a, b) => a.idx - b.idx || a.nameLen - b.nameLen)
+        if (phraseHits.length) return phraseHits[0].v
+
+        // 4) Loose word match ("english standard" tokens in the name)
         if (candidate.includes(" ")) {
-            const words = candidate.split(/\s+/).filter((w) => w !== "the" && w !== "version" && w !== "bible" && w !== "translation")
+            const words = candidate.split(/\s+/).filter((w) => w !== "the" && w !== "version" && w !== "bible" && w !== "translation" && w !== "authorised" && w !== "authorized")
             if (words.length) {
                 const wordHits = list.filter((v) => {
                     const n = v.name.toLowerCase()
-                    return words.every((w) => tokenRe(w).test(n))
+                    if (!words.every((w) => tokenRe(w).test(n))) return false
+                    if (!candidate.includes("new") && /\bnew\b/.test(n)) return false
+                    return true
                 })
                 return pickFromHits(wordHits)
             }
@@ -99,10 +120,18 @@ export function resolveSpokenBibleVersion(spokenAlias: string, versions?: { id: 
     const direct = matchAlias(alias)
     if (direct) return direct
 
-    // 4) Acronym expansion: "niv" → "New International Version" display names
+    // 4) Acronym → full name: "niv" → "New International Version" display names
     for (const expansion of BIBLE_ALIAS_EXPANSIONS[alias] || []) {
         const hit = matchAlias(expansion)
         if (hit) return hit
+    }
+
+    // 5) Full name → acronym: "king james" / "king james version" → short "KJV" install
+    for (const [abbr, expansions] of Object.entries(BIBLE_ALIAS_EXPANSIONS)) {
+        if (expansions.some((e) => alias === e || alias.startsWith(e + " ") || e.startsWith(alias))) {
+            const hit = matchAlias(abbr)
+            if (hit) return hit
+        }
     }
 
     return null

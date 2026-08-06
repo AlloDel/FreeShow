@@ -150,9 +150,7 @@ export async function startStt(): Promise<void> {
 
     sttEnabled.set(true)
     resetSttDebugPartialThrottle()
-    sttDebug(
-        `session settings model=${settings.model} autoShow=${settings.autoShowBible} quoteMatch=${settings.matchQuotedVerseText} threshold=${settings.confidenceThreshold} bible=${settings.bibleVersionId || "auto"} mic=${settings.microphoneId || "default"}`
-    )
+    sttDebug(`session settings model=${settings.model} autoShow=${settings.autoShowBible} quoteMatch=${settings.matchQuotedVerseText} threshold=${settings.confidenceThreshold} bible=${settings.bibleVersionId || "auto"} mic=${settings.microphoneId || "default"}`)
     requestSttDebugLogPath()
     void ensureQuoteIndex()
     console.log("[STT] Started audio capture")
@@ -431,10 +429,7 @@ function isIncompleteCommandCandidate(text: string): boolean {
 }
 
 function wordCount(text: string): number {
-    return text
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean).length
+    return text.trim().split(/\s+/).filter(Boolean).length
 }
 
 /** Ensure the quotation inverted index matches the active STT Bible version. */
@@ -499,17 +494,29 @@ function tryQuoteMatch(transcript: string): BibleDetection | null {
         return null
     }
 
+    // Mid-passage: warm scripture context → lock quote-follow to that chapter.
+    // Cold sermon (no recent verse/ref): free discovery across the whole Bible.
+    // Chapter changes are via "next chapter" / spoken refs — not quote drift.
+    const ctx = bibleDetector.getLiveContext()
+    const prefer = ctx ? { bookNumber: ctx.bookNumber, chapter: ctx.chapter } : undefined
+
     // Lexical first, then optional hybrid / embed re-rank when available.
     const candidates = quoteMatcher.matchCandidates(transcript, 5)
     if (!candidates.length) return null
 
+    const pool = prefer ? candidates.filter((c) => c.bookNumber === prefer.bookNumber && c.chapter === prefer.chapter) : candidates
+    if (!pool.length) return null
+
     let detection: BibleDetection | null = null
     if (quoteEmbedMatcher.isReady()) {
-        detection = quoteEmbedMatcher.rerank(transcript, candidates)
+        detection = quoteEmbedMatcher.rerank(transcript, pool)
+        if (detection && prefer && (detection.bookNumber !== prefer.bookNumber || detection.chapter !== prefer.chapter)) {
+            detection = null
+        }
     }
     if (!detection) {
         // Fall back to lexical best (margin + cooldown inside match()).
-        const lexical = quoteMatcher.match(transcript)
+        const lexical = quoteMatcher.match(transcript, Date.now(), prefer)
         if (!lexical) return null
         detection = lexical.detection
     } else {

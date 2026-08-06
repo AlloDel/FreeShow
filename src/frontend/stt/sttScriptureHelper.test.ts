@@ -16,7 +16,12 @@ describe("resolveSpokenBibleVersion", () => {
     })
 
     it("matches exact short names", () => {
-        expect(resolveSpokenBibleVersion("niv", [{ id: "niv-id", name: "NIV" }, { id: "coll-id", name: "KJV + NIV (collection)" }])).toEqual({
+        expect(
+            resolveSpokenBibleVersion("niv", [
+                { id: "niv-id", name: "NIV" },
+                { id: "coll-id", name: "KJV + NIV (collection)" }
+            ])
+        ).toEqual({
             id: "niv-id",
             name: "NIV"
         })
@@ -36,6 +41,15 @@ describe("resolveSpokenBibleVersion", () => {
     it("matches multi-word aliases against name tokens", () => {
         expect(resolveSpokenBibleVersion("english standard version", versions)).toEqual({ id: "esv-id", name: "English Standard Version" })
         expect(resolveSpokenBibleVersion("new king james", versions)).toEqual({ id: "nkjv-id", name: "New King James Version" })
+    })
+
+    it("resolves full King James name to a KJV-labeled install", () => {
+        expect(resolveSpokenBibleVersion("king james", versions)).toEqual({ id: "kjv-id", name: "King James Version (KJV)" })
+        expect(resolveSpokenBibleVersion("king james version", [{ id: "short", name: "KJV" }])).toEqual({ id: "short", name: "KJV" })
+        expect(resolveSpokenBibleVersion("kjv", [{ id: "auth", name: "King James (Authorised) Version" }])).toEqual({
+            id: "auth",
+            name: "King James (Authorised) Version"
+        })
     })
 
     it("skips collections", () => {

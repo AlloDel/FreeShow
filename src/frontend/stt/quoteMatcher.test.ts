@@ -166,4 +166,18 @@ describe("QuoteMatcher", () => {
         expect(result).not.toBeNull()
         expect(result!.detection).toMatchObject({ bookName: "John", chapter: 3, verseStart: 16 })
     })
+
+    it("cold match (no prefer) can discover a verse anywhere", () => {
+        const result = matcher.match("the lord is my shepherd i shall not want")
+        expect(result?.detection).toMatchObject({ bookName: "Psalms", chapter: 23, verseStart: 1 })
+    })
+
+    it("mid-passage prefer locks to chapter and ignores other books", () => {
+        // Same shepherd wording would normally hit Psalm 23, but mid John 3 follow must stay put / miss
+        const locked = matcher.match("the lord is my shepherd i shall not want", Date.now(), { bookNumber: 43, chapter: 3 })
+        expect(locked).toBeNull()
+
+        const inChapter = matcher.match("for god so loved the world that he gave", Date.now() + 10_000, { bookNumber: 43, chapter: 3 })
+        expect(inChapter?.detection).toMatchObject({ bookName: "John", chapter: 3, verseStart: 16 })
+    })
 })

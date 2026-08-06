@@ -12,7 +12,8 @@ import type { BookEntry } from "../../types/Stt"
  */
 export const BIBLE_BOOKS: BookEntry[] = [
     // --- Old Testament ---
-    { number: 1, name: "Genesis", abbreviations: ["gen", "gn"], spokenVariants: ["genesis", "jenesis", "genesys"], maxChapters: 50 },
+    // "genes" is Nemotron's consistent truncation of "Genesis" (fuzzy length gap skips it).
+    { number: 1, name: "Genesis", abbreviations: ["gen", "gn"], spokenVariants: ["genesis", "jenesis", "genesys", "genes"], maxChapters: 50 },
     { number: 2, name: "Exodus", abbreviations: ["exod", "exo", "ex"], spokenVariants: ["exodus"], maxChapters: 40 },
     { number: 3, name: "Leviticus", abbreviations: ["lev", "lv"], spokenVariants: ["leviticus"], maxChapters: 27 },
     { number: 4, name: "Numbers", abbreviations: ["num", "nm", "nb"], spokenVariants: ["numbers"], maxChapters: 36 },
@@ -124,6 +125,8 @@ export const ASR_BOOK_CONFUSIONS: AsrBookConfusion[] = [
     // Psalms — "Palm 23" is the classic ASR garble; allow chapter-only
     { alias: "palm", bookNumber: 19, requireVerse: false },
     { alias: "palms", bookNumber: 19, requireVerse: false },
+    // Genesis — streaming often finalizes "Genes" mid-word; allow chapter-only ("Genes 3")
+    { alias: "genes", bookNumber: 1, requireVerse: false },
     // John
     { alias: "joan", bookNumber: 43 },
     { alias: "jon", bookNumber: 43 },

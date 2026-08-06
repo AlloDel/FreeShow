@@ -333,10 +333,21 @@ export class QuoteMatcher {
     /**
      * Score a transcript (partial or final) against the indexed Bible.
      * Returns one best match when thresholds clear, else null.
+     *
+     * @param prefer - Mid-passage quote-follow: lock to this book+chapter.
+     *   Omit for cold/sermon discovery (search the whole indexed Bible).
+     *   When prefer is set and nothing in-chapter matches, returns null —
+     *   chapter changes are via "next chapter" / spoken refs, not quote drift.
      */
-    match(transcript: string, now = Date.now()): QuoteMatchResult | null {
-        const ranked = this.rankCandidates(transcript)
+    match(transcript: string, now = Date.now(), prefer?: { bookNumber: number; chapter: number }): QuoteMatchResult | null {
+        let ranked = this.rankCandidates(transcript)
         if (!ranked.length) return null
+
+        if (prefer) {
+            const sameChapter = ranked.filter((r) => r.bookNumber === prefer.bookNumber && r.chapter === prefer.chapter)
+            if (!sameChapter.length) return null
+            ranked = sameChapter
+        }
 
         const best = ranked[0]
         const second = ranked[1]

@@ -6,6 +6,7 @@
 import { uid } from "uid"
 import type { BibleDetection, BookEntry } from "../../types/Stt"
 import { ASR_BOOK_CONFUSIONS, BIBLE_BOOKS, SPOKEN_NUMBERS } from "./books"
+import { isValidChapterVerse, maxVerseInChapter } from "./chapterVerseCounts"
 
 /** Filler phrases stripped before detection (case-insensitive). */
 const FILLER_PHRASES = [
@@ -40,11 +41,48 @@ const FILLER_PHRASES = [
     "come with me to"
 ]
 
-/** Phrases indicating the speaker wants to revisit the previous verse. */
-const PREVIOUS_VERSE_PHRASES = ["previous verse", "last verse", "that verse again", "go back to that verse", "back to that verse", "the same verse", "repeat that verse"]
+/** Phrases that re-show the current verse (not navigate). */
+const REFIRE_VERSE_PHRASES = ["that verse again", "go back to that verse", "back to that verse", "the same verse", "repeat that verse"]
+
+/** Phrases that step one verse backward. */
+const PREVIOUS_VERSE_PHRASES = ["previous verse", "last verse"]
 
 /** Phrases indicating the speaker wants to advance to the next verse. */
 const NEXT_VERSE_PHRASES = ["next verse", "following verse", "verse after that", "next one"]
+
+/**
+ * Voice nav ("next verse" / "previous verse") must look like a command, not
+ * commentary that happens to contain those words ("I read the next verse without…").
+ * Short utterances ending/starting with the phrase still count ("okay that works next verse").
+ */
+const NAV_COMMAND_MAX_WORDS = 10
+
+function isNavCommandUtterance(text: string, phrases: string[]): boolean {
+    const lower = text
+        .toLowerCase()
+        .replace(/[.,!?;:]/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+    if (!lower) return false
+    if (!phrases.some((phrase) => lower.includes(phrase))) return false
+
+    const words = lower.split(" ").filter(Boolean)
+    if (words.length <= NAV_COMMAND_MAX_WORDS) return true
+
+    // Long speech: only if the phrase is at the start (after light filler) or is the trailing clause.
+    const stripped = lower.replace(/^(?:okay|ok|and|so|now|uh|um|well|yes|yeah|alright|then)\s+/, "").trim()
+    if (phrases.some((phrase) => stripped === phrase || stripped.startsWith(phrase + " "))) {
+        // "Previous verse which is 4 verse 1" — starts with command; allow if the lead-in is short.
+        const afterPhrase = phrases.reduce((rest, phrase) => (rest.startsWith(phrase) ? rest.slice(phrase.length).trim() : rest), stripped)
+        const afterWords = afterPhrase.split(" ").filter(Boolean)
+        return afterWords.length <= 6
+    }
+    if (phrases.some((phrase) => lower.endsWith(phrase))) {
+        const before = phrases.reduce((rest, phrase) => (rest.endsWith(phrase) ? rest.slice(0, -phrase.length).trim() : rest), lower)
+        return before.split(" ").filter(Boolean).length <= 4
+    }
+    return false
+}
 
 /** Phrases indicating the speaker wants to advance to the next chapter (verse 1). */
 const NEXT_CHAPTER_PHRASES = ["next chapter", "following chapter", "chapter after that"]
@@ -56,7 +94,9 @@ const PREVIOUS_CHAPTER_PHRASES = ["previous chapter", "last chapter", "chapter b
  * Verse cue words longest-first. "versus" MUST precede "verse" — ASR often writes
  * "vs" as "versus", and a "verse" prefix match left "ersus" as a fake verse token.
  */
-const VERSE_CUE = "(?:versus|verses|verse|vs|v)"
+// "ver" is a common streaming truncation of "verse" (see Genes chapter 3 ver 15).
+// Keep longer forms first so "verse"/"versus" are not split by a "ver" prefix match.
+const VERSE_CUE = "(?:versus|verses|verse|ver|vs|v)"
 
 /**
  * Known Bible translation aliases (longest first). Used only with explicit cue words
@@ -67,14 +107,21 @@ const TRANSLATION_ALIASES = [
     "new king james version",
     "english standard version",
     "new living translation",
+    "new american standard bible",
+    "new american standard version",
     "new american standard",
     "christian standard bible",
     "american standard version",
     "world english bible",
+    "king james authorised version",
+    "king james authorized version",
+    "authorised version",
+    "authorized version",
     "king james version",
     "new king james",
     "king james",
     "the message",
+    "amplified bible",
     "amplified",
     "message",
     "nkjv",
@@ -206,12 +253,21 @@ export class BibleDetector {
 
         const previous = this.checkPreviousVerseCommand(cleaned)
         if (previous) {
+            this.clearPendingCommand("flushed")
+            this.pendingBook = null
+            this.setContext(previous, false)
+            this.pushRecent(previous)
+            return [previous]
+        }
+
+        const refire = this.checkRefireVerseCommand(cleaned)
+        if (refire) {
             // Re-firing the last detection means the speaker is still talking about it —
             // refresh the context window so a subsequent bare verse mention still resolves.
             this.clearPendingCommand("flushed")
             this.pendingBook = null
-            this.setContext(previous, false)
-            return [previous]
+            this.setContext(refire, false)
+            return [refire]
         }
 
         const nextChapter = this.checkNextChapterCommand(cleaned)
@@ -269,6 +325,20 @@ export class BibleDetector {
         return front ? { ...front } : null
     }
 
+    /**
+     * Live book/chapter context for mid-passage quote-follow (lock to chapter).
+     * Returns null when cold — quote matching then searches the whole Bible.
+     */
+    getLiveContext(): { bookNumber: number; bookName: string; chapter: number; verseStart: number } | null {
+        if (!this.isContextLive() || !this.context) return null
+        return {
+            bookNumber: this.context.bookNumber,
+            bookName: this.context.bookName,
+            chapter: this.context.chapter,
+            verseStart: this.context.verseStart
+        }
+    }
+
     /** Reset internal state (call when STT is stopped or errors). */
     reset(): void {
         this.clearPendingTimer()
@@ -304,6 +374,16 @@ export class BibleDetector {
             }
 
             if (ref.chapter > 0 && ref.chapter > match.book.maxChapters) continue
+
+            // Impossible verse for this chapter (Genesis 3:50, etc.)
+            if (ref.verseStart > 0 && !isValidChapterVerse(match.book.number, ref.chapter, ref.verseStart)) {
+                this.pushDebug(`reject_out_of_range ${match.book.name} ${ref.chapter}:${ref.verseStart}`)
+                continue
+            }
+            if (ref.verseEnd && !isValidChapterVerse(match.book.number, ref.chapter, ref.verseEnd)) {
+                this.pushDebug(`reject_out_of_range ${match.book.name} ${ref.chapter}:${ref.verseEnd}`)
+                continue
+            }
 
             // Misheard / common-word aliases need a full chapter+verse unless the alias
             // is an explicit high-signal confusion (Palm→Psalms).
@@ -347,6 +427,13 @@ export class BibleDetector {
         if (!this.isContextLive()) return null
         const context = this.context!
 
+        // Explicit chapter (re)mention on the warm book — e.g. ASR truncated
+        // "Isaiah chapter fifty-three…" to "Isaiah chapter 5", then the next
+        // final is "Chapter 53 verse 5". Must retarget chapter, not steal verse 5
+        // onto the stale chapter.
+        const chapterRetarget = this.detectChapterRetarget(cleaned, context)
+        if (chapterRetarget) return chapterRetarget
+
         const allowBare = context.allowBareVerse || context.pendingVerseCue
         const verse = this.extractVerseOnly(cleaned, allowBare) || this.extractLoneNumber(cleaned)
         if (!verse) return null
@@ -358,9 +445,52 @@ export class BibleDetector {
             console.log(`[STT] Recovered verse ${verse.start} after incomplete verse cue`)
         }
 
+        if (!isValidChapterVerse(context.bookNumber, context.chapter, verse.start)) {
+            this.pushDebug(`reject_out_of_range ${context.bookName} ${context.chapter}:${verse.start}`)
+            return null
+        }
+
         const detection = this.makeDetection(context.bookNumber, context.bookName, context.chapter, verse.start, verse.end, 0.9, cleaned, "contextual")
         this.setContext(detection, false)
         this.pushRecent(detection)
+        return detection
+    }
+
+    /**
+     * When context is live and the utterance names a chapter (keyword or
+     * chapter+verse shape), update book+chapter instead of treating only the
+     * trailing "verse N" against the previous chapter.
+     */
+    private detectChapterRetarget(cleaned: string, context: ActiveContext): BibleDetection | null {
+        // Require an explicit chapter cue so bare "verse 15" still stays verse-only.
+        if (!/\b(?:chapter|chap|ch)\b/i.test(cleaned)) return null
+
+        const book = BIBLE_BOOKS.find((b) => b.number === context.bookNumber)
+        if (!book) return null
+
+        const synthetic = `${book.name} ${cleaned}`
+        const match: BookMatch = { book, start: 0, end: book.name.length }
+        const ref = this.parseReference(synthetic, match)
+        if (!ref || ref.chapter <= 0 || ref.chapter > book.maxChapters) return null
+
+        // Same chapter + no new verse → nothing to do (caller may still verse-only)
+        if (ref.chapter === context.chapter && ref.verseStart === 0) return null
+        if (ref.chapter === context.chapter && ref.verseStart === context.verseStart && ref.verseEnd === context.verseEnd) {
+            return null
+        }
+
+        if (ref.verseStart === 0) {
+            const detection = this.makeDetection(book.number, book.name, ref.chapter, 1, undefined, 0.86, cleaned, "contextual")
+            this.setContext(detection, true, ref.pendingVerseCue)
+            this.pushRecent(detection)
+            this.pushDebug(`chapter_retarget ${book.name} ${ref.chapter}:1 from "${cleaned}"`)
+            return detection
+        }
+
+        const detection = this.makeDetection(book.number, book.name, ref.chapter, ref.verseStart, ref.verseEnd, 0.95, cleaned, "contextual")
+        this.setContext(detection, false)
+        this.pushRecent(detection)
+        this.pushDebug(`chapter_retarget ${book.name} ${ref.chapter}:${ref.verseStart} from "${cleaned}"`)
         return detection
     }
 
@@ -577,10 +707,7 @@ export class BibleDetector {
 
         // Pattern 2: "chapter 3 verse 16", "3 vs 4", "3 versus 4", "3 v.4", "3vs16"
         // VERSE_CUE lists "versus" before "verse" so ASR "versus" is not split into verse+"ersus".
-        const spokenPattern = new RegExp(
-            `^(?:(?:chapter|chap|ch)\\s+)?(\\d{1,3}|[a-z ]+?)(?:\\s*[,.;:]?\\s+|\\s*(?=${VERSE_CUE}\\.?\\s*(?:\\d|[a-z])))(?:${VERSE_CUE})\\.?\\s*(\\d{1,3}|[a-z ]+?)(?:\\s*(?:through|to|-|–|—)\\s*(\\d{1,3}|[a-z ]+?))?(?:\\s|$|[,.!?;:])`,
-            "i"
-        )
+        const spokenPattern = new RegExp(`^(?:(?:chapter|chap|ch)\\s+)?(\\d{1,3}|[a-z ]+?)(?:\\s*[,.;:]?\\s+|\\s*(?=${VERSE_CUE}\\.?\\s*(?:\\d|[a-z])))(?:${VERSE_CUE})\\.?\\s*(\\d{1,3}|[a-z ]+?)(?:\\s*(?:through|to|-|–|—)\\s*(\\d{1,3}|[a-z ]+?))?(?:\\s|$|[,.!?;:])`, "i")
         const spokenMatch = afterBook.match(spokenPattern)
         if (spokenMatch) {
             const chapter = this.parseNumber(spokenMatch[1])
@@ -723,30 +850,44 @@ export class BibleDetector {
 
         // Full phrases only. Bare "next"/"back"/"previous" are held as pendingCommand
         // on finals (VAD often splits "next verse") — see notePendingCommand.
-        const isNext = NEXT_VERSE_PHRASES.some((phrase) => lower.includes(phrase))
+        // Must look like a command — not "I read the next verse without having to say…".
+        if (!isNavCommandUtterance(text, NEXT_VERSE_PHRASES)) return null
 
-        if (isNext) {
-            const nextVerse = (front.verseEnd || front.verseStart) + 1
-            if (nextVerse > MAX_VERSE) return null
-            return this.makeDetection(front.bookNumber, front.bookName, front.chapter, nextVerse, undefined, 0.95, text, "contextual")
+        const nextVerse = (front.verseEnd || front.verseStart) + 1
+        const maxVerse = maxVerseInChapter(front.bookNumber, front.chapter)
+        if (maxVerse > 0 && nextVerse > maxVerse) {
+            this.pushDebug(`next_verse blocked at end ${front.bookName} ${front.chapter}:${maxVerse}`)
+            return null
         }
-
-        return null
+        if (nextVerse > MAX_VERSE) return null
+        return this.makeDetection(front.bookNumber, front.bookName, front.chapter, nextVerse, undefined, 0.95, text, "contextual")
     }
 
     private checkPreviousVerseCommand(text: string): BibleDetection | null {
-        const lower = text.toLowerCase()
-        for (const phrase of PREVIOUS_VERSE_PHRASES) {
-            if (lower.includes(phrase) && this.recentDetections.length > 0) {
-                return { ...this.recentDetections[0], id: uid(), detectedAt: Date.now() }
-            }
+        if (!isNavCommandUtterance(text, PREVIOUS_VERSE_PHRASES)) return null
+        const front = this.recentDetections[0]
+        if (!front) return null
+
+        const current = front.verseStart
+        if (current > 1) {
+            return this.makeDetection(front.bookNumber, front.bookName, front.chapter, current - 1, undefined, 0.95, text, "contextual")
         }
-        return null
+        // At verse 1 — step to previous chapter's last verse when possible
+        if (front.chapter <= 1) return null
+        const prevChapter = front.chapter - 1
+        const lastVerse = maxVerseInChapter(front.bookNumber, prevChapter)
+        if (lastVerse < 1) return null
+        return this.makeDetection(front.bookNumber, front.bookName, prevChapter, lastVerse, undefined, 0.95, text, "contextual")
+    }
+
+    private checkRefireVerseCommand(text: string): BibleDetection | null {
+        if (!isNavCommandUtterance(text, REFIRE_VERSE_PHRASES)) return null
+        if (!this.recentDetections.length) return null
+        return { ...this.recentDetections[0], id: uid(), detectedAt: Date.now() }
     }
 
     private checkNextChapterCommand(text: string): BibleDetection | null {
-        const lower = text.toLowerCase()
-        if (!NEXT_CHAPTER_PHRASES.some((phrase) => lower.includes(phrase))) return null
+        if (!isNavCommandUtterance(text, NEXT_CHAPTER_PHRASES)) return null
 
         const front = this.recentDetections[0]
         if (!front) return null
@@ -760,8 +901,7 @@ export class BibleDetector {
     }
 
     private checkPreviousChapterCommand(text: string): BibleDetection | null {
-        const lower = text.toLowerCase()
-        if (!PREVIOUS_CHAPTER_PHRASES.some((phrase) => lower.includes(phrase))) return null
+        if (!isNavCommandUtterance(text, PREVIOUS_CHAPTER_PHRASES)) return null
 
         const front = this.recentDetections[0]
         if (!front) return null
@@ -1171,7 +1311,8 @@ export class BibleDetector {
  * switch to / change to / use) plus a known alias, OR a whole-utterance short
  * acronym ("NIV", "KJV") — bare "NIV" mid-sermon never matches.
  *
- * Examples: "NIV translation", "switch to KJV", "KJV version", "use the ESV", "NIV".
+ * Examples: "NIV translation", "switch to KJV", "switch back to King James version",
+ * "KJV version", "use the ESV", "NIV".
  * Returns the matched alias (lowercased) or null.
  */
 export function extractTranslationCommand(text: string): string | null {
@@ -1196,8 +1337,8 @@ export function extractTranslationCommand(text: string): string | null {
         return null
     }
 
-    // "switch to KJV" / "change to the NIV" / "use the ESV" / "use NIV translation"
-    const switchMatch = normalized.match(/^(?:switch\s+to|change\s+to|use)\s+(?:the\s+)?(.+)$/)
+    // "switch to KJV" / "switch back to King James" / "change to the NIV" / "use the ESV"
+    const switchMatch = normalized.match(/^(?:switch\s+(?:back\s+)?to|change\s+(?:back\s+)?to|go\s+back\s+to|use)\s+(?:the\s+)?(.+)$/)
     if (switchMatch) {
         const rest = switchMatch[1].trim()
         // Prefer the full phrase first ("New International Version") before stripping the cue word
