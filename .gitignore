@@ -11,6 +11,9 @@
 
 *.env
 
+# Local agent handoff (never commit)
+AGENT_HANDOFF.local.md
+
 .DS_Store
 
 test-output/
