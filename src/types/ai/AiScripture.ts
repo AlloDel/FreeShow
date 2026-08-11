@@ -18,7 +18,7 @@ export interface DetectedReference {
     verseEnd: number
     confidence: "high" | "medium" | "low"
     type: "explicit" | "quoted"
-    source: "regex" | "llm"
+    source: "regex" | "quote" | "llm"
     quote?: string // the transcript text that triggered the detection
     matchedBibleId?: string // set when quoted verse text matched a specific translation
     timestamp: number
@@ -64,6 +64,17 @@ export interface AiScriptureStartConfig {
     refCooldownSeconds?: number // suppress re-emitting an intersecting reference within this window
     voiceCommands?: boolean
     translations?: AiScriptureTranslation[] // selected translations, for spoken translation switching
+    quoteBibleId?: string // bible the quote index was built from
+    quoteVerses?: QuoteIndexVerse[] // verse text for the keyless quoted verse tier
+}
+
+/** One verse of the indexed bible, sent from the renderer at session start. */
+export interface QuoteIndexVerse {
+    bookNumber: number
+    bookName: string
+    chapter: number
+    verse: number
+    text: string
 }
 
 export type AiScriptureState = "starting" | "listening" | "stopped" | "error" | "llm_paused"

@@ -3,6 +3,8 @@
 // tier 2: LLM detection over the rolling transcript for paraphrased/quoted references (optional, needs an API key)
 
 import type { AIProviderId, AiScriptureBook, AiScriptureState, DetectedReference } from "../../types/ai/AiScripture"
+import type { QuoteIndexVerse } from "../../types/ai/AiScripture"
+import { QuoteMatcher } from "./quoteMatcher"
 import { getProvider } from "./providers"
 import { REQUEST_TIMEOUT } from "./providers/types"
 
@@ -266,6 +268,9 @@ interface DetectionCoordinatorOptions {
     onDetection: (ref: DetectedReference) => void
     onStatus: (state: AiScriptureState, extra?: { message?: string; keyless?: boolean }) => void
     cooldownSeconds?: number
+    /** Verse text of the detection bible, for the keyless quoted verse tier. */
+    quoteVerses?: QuoteIndexVerse[]
+    quoteBibleId?: string
 }
 
 const ROLLING_MAX_MS = 90000 // rolling transcript cap
@@ -289,6 +294,9 @@ export class DetectionCoordinator {
     private idCounter = 0
     private stopped = false
 
+    // keyless quoted verse tier (tier 1.5)
+    private quoteMatcher = new QuoteMatcher()
+
     // tier 2 state
     private totalWords = 0
     private wordsAtLastLlmCall = 0
@@ -303,6 +311,9 @@ export class DetectionCoordinator {
         this.bookIndex = buildBookIndex(opts.books)
         this.anchorBookPrefix = this.bookIndex.bookPattern ? new RegExp("(?:^|[^a-z0-9])(?:" + this.bookIndex.bookPattern + ")\\s+$") : null
         this.cooldownMs = (opts.cooldownSeconds ?? DEFAULT_COOLDOWN_SECONDS) * 1000
+
+        // the renderer is the only side with a bible loaded, so it sends the verse text
+        if (opts.quoteVerses?.length) this.quoteMatcher.buildIndex(opts.quoteBibleId || "", opts.quoteVerses)
     }
 
     // replace the anchor passage (what is live on the output right now)
@@ -318,6 +329,7 @@ export class DetectionCoordinator {
         this.trimRollingTranscript()
 
         this.runTier1()
+        this.runQuoteTier()
         this.maybeRunTier2()
     }
 
@@ -334,12 +346,18 @@ export class DetectionCoordinator {
 
     // TIER 1
 
-    private runTier1() {
+    /** The transcript of the last `windowMs` of speech. */
+    private recentText(windowMs: number): string {
+        if (!this.segments.length) return ""
         const newestEnd = this.segments[this.segments.length - 1].endMs
-        const windowText = this.segments
-            .filter((segment) => segment.endMs >= newestEnd - TIER1_WINDOW_MS)
+        return this.segments
+            .filter((segment) => segment.endMs >= newestEnd - windowMs)
             .map((segment) => segment.text)
             .join(" ")
+    }
+
+    private runTier1() {
+        const windowText = this.recentText(TIER1_WINDOW_MS)
 
         matchReferences(windowText, this.bookIndex).forEach((match) => {
             this.tryEmit({ book: match.book, bookNumber: match.bookNumber, chapter: match.chapter, verseStart: match.verseStart, verseEnd: match.verseEnd, confidence: match.confidence, type: "explicit", quote: match.quote }, "regex")
@@ -382,6 +400,39 @@ export class DetectionCoordinator {
     }
 
     // TIER 2 - single flight, newest transcript wins once the in-flight call settles
+
+    /**
+     * Tier 1.5: the speaker recites a verse without naming it. This needs no LLM and no
+     * API key, so it works for every user.
+     *
+     * While a passage is already live, only that chapter can match. Live testing showed
+     * a similar verse in another book pulling the projection away in the middle of a
+     * reading, which is worse than showing nothing.
+     */
+    private runQuoteTier() {
+        if (!this.quoteMatcher.isReady()) return
+
+        const windowText = this.recentText(TIER1_WINDOW_MS)
+        if (!windowText) return
+
+        const prefer = this.anchor ? { bookNumber: this.anchor.bookNumber, chapter: this.anchor.chapter } : undefined
+        const match = this.quoteMatcher.match(windowText, Date.now(), prefer)
+        if (!match) return
+
+        this.tryEmit(
+            {
+                book: match.bookName,
+                bookNumber: match.bookNumber,
+                chapter: match.chapter,
+                verseStart: match.verse,
+                verseEnd: match.verse,
+                confidence: match.confidence,
+                type: "quoted",
+                quote: match.quote
+            },
+            "quote"
+        )
+    }
 
     private maybeRunTier2() {
         const llm = this.opts.llm
@@ -483,7 +534,7 @@ export class DetectionCoordinator {
 
     // EMISSION
 
-    private tryEmit(candidate: DetectionCandidate, source: "regex" | "llm") {
+    private tryEmit(candidate: DetectionCandidate, source: "regex" | "quote" | "llm") {
         const now = Date.now()
         const key = candidate.bookNumber + "." + candidate.chapter
         const keepMs = Math.max(this.cooldownMs, LLM_ALREADY_DETECTED_MS)

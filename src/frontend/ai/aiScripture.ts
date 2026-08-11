@@ -3,7 +3,7 @@
 // receives detected scripture references back & projects/suggests them
 
 import { get } from "svelte/store"
-import type { AiScriptureBook, AiScriptureCommandEvent, AiScriptureStartConfig, AiScriptureTranslation, DetectedReference, WhisperModelId } from "../../types/ai/AiScripture"
+import type { AiScriptureBook, AiScriptureCommandEvent, AiScriptureStartConfig, AiScriptureTranslation, DetectedReference, QuoteIndexVerse, WhisperModelId } from "../../types/ai/AiScripture"
 import { Main } from "../../types/IPC/Main"
 import type { OutSlide } from "../../types/Show"
 import { AudioMicrophone } from "../audio/audioMicrophone"
@@ -136,7 +136,9 @@ async function startSession(): Promise<{ ok: boolean; error?: string }> {
         llm,
         refCooldownSeconds: settings.refCooldownSeconds,
         voiceCommands: !!settings.voiceCommands,
-        translations: buildTranslationTable(searchBibleIds)
+        translations: buildTranslationTable(searchBibleIds),
+        // verse text for the keyless quoted verse tier - only the renderer has a bible loaded
+        ...(await buildQuoteIndexInput(activeSubTab))
     }
 
     aiScriptureTranscript.set([])
@@ -335,6 +337,38 @@ function expandBibleIds(ids: string[]): string[] {
         })
     })
     return expanded
+}
+
+/**
+ * Verse text of one bible for the keyless quoted verse tier, which needs the words to
+ * match against. Only the first (active) bible is sent: one index is enough to find a
+ * recited verse, and it keeps the start up payload to a single bible.
+ */
+async function buildQuoteIndexInput(bibleId: string): Promise<{ quoteBibleId?: string; quoteVerses?: QuoteIndexVerse[] }> {
+    try {
+        const bible = await loadJsonBible(bibleId)
+        const books = bible?.data.books || []
+        if (!books.length) return {}
+
+        const quoteVerses: QuoteIndexVerse[] = []
+        for (const book of books) {
+            const bookName = (book as any).customName || book.name
+            if (!book.number || !bookName) continue
+
+            for (const chapter of book.chapters || []) {
+                if (!chapter.number) continue
+                for (const verse of chapter.verses || []) {
+                    if (!verse.number || !verse.text) continue
+                    quoteVerses.push({ bookNumber: book.number, bookName, chapter: chapter.number, verse: verse.number, text: verse.text })
+                }
+            }
+        }
+
+        return quoteVerses.length ? { quoteBibleId: bibleId, quoteVerses } : {}
+    } catch (err) {
+        console.error("Error building the quote index for AI scripture:", bibleId, err)
+        return {}
+    }
 }
 
 async function buildBookTable(bibleIds: string[]): Promise<AiScriptureBook[]> {
