@@ -202,10 +202,49 @@ interface ReferenceMatch {
     quote: string
 }
 
+/**
+ * Speakers often put the book last: "the third chapter of John", "chapter 3 of John",
+ * "verse 16 of John chapter 3", "the 23rd Psalm". None of those are found by a pattern
+ * that expects the book first, so they are rewritten into the normal order and the
+ * ordinary pattern handles them.
+ *
+ * Only a name this bible actually has is moved, so a wrong guess cannot invent a
+ * reference. Numbers are already digits here, because normalizeSpokenNumbers runs first.
+ */
+export function reorderOfPhrasing(text: string, index: BookIndex): string {
+    if (!index.bookPattern) return text
+    const book = "(" + index.bookPattern + ")"
+
+    return (
+        text
+            // "verse 16 of John chapter 3" -> "John chapter 3 verse 16"
+            .replace(new RegExp(`\\bverses?\\s+(\\d{1,3})\\s+of\\s+${book}\\s*,?\\s*(?:chapter|chap|ch)\\.?\\s+(\\d{1,3})`, "gi"), "$2 chapter $3 verse $1")
+            // "the 3rd chapter of John" / "the 3 chapter of John" -> "John chapter 3"
+            .replace(new RegExp(`\\b(?:the\\s+)?(\\d{1,3})(?:st|nd|rd|th)?\\s+chapter\\s+of\\s+${book}`, "gi"), "$2 chapter $1")
+            // "chapter 3 of John" -> "John chapter 3"
+            .replace(new RegExp(`\\bchapter\\s+(\\d{1,3})\\s+of\\s+${book}`, "gi"), "$2 chapter $1")
+            // "the 23rd Psalm" -> "Psalm 23"
+            .replace(new RegExp(`\\b(?:the\\s+)?(\\d{1,3})(?:st|nd|rd|th)\\s+${book}\\b`, "gi"), "$2 $1")
+            // a book with one chapter is spoken without it: "Jude verse 3" -> "Jude 1 verse 3"
+            .replace(singleChapterPattern(index), "$1 1 verse $2")
+    )
+}
+
+/** "<single chapter book> verse N", so the missing chapter can be filled in as 1. */
+function singleChapterPattern(index: BookIndex): RegExp {
+    const tokens: string[] = []
+    index.byToken.forEach((entry, token) => {
+        if (entry.chapterCount === 1) tokens.push(escapeRegex(token).replace(/ /g, "\\s+"))
+    })
+    if (!tokens.length) return /$^/ // matches nothing
+    tokens.sort((a, b) => b.length - a.length)
+    return new RegExp(`\\b(${tokens.join("|")})\\s+verses?\\s+(\\d{1,3})`, "gi")
+}
+
 function matchReferences(text: string, index: BookIndex): ReferenceMatch[] {
     if (!index.regex) return []
 
-    const normalized = normalizeSpokenNumbers(text)
+    const normalized = reorderOfPhrasing(normalizeSpokenNumbers(text), index)
     const results: ReferenceMatch[] = []
 
     index.regex.lastIndex = 0
