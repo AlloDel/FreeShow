@@ -3,8 +3,36 @@
 // tier 2: LLM detection over the rolling transcript for paraphrased/quoted references (optional, needs an API key)
 
 import type { AiScriptureBook, AiScriptureState, DetectedReference } from "../../../types/ai/AiScripture"
+import { isValidChapterVerse, maxVerseInChapter } from "./chapterVerseCounts"
 import { LLM_API_TIMEOUT } from "../llm/models/APIModel"
 import { getLLMScriptureProvider } from "./llmTalkScripture"
+
+// ASR BOOK NAME CONFUSIONS
+// A streaming model finalizes a book name before it is finished, or hears a common
+// word instead of it. These were all seen in live services. An alias whose word is
+// also ordinary English needs an explicit verse before it counts, so normal speech
+// ("he acts his age", "look at this") cannot trigger a reference.
+
+interface AsrBookAlias {
+    alias: string
+    canonNumber: number
+    requireVerse: boolean
+}
+
+const ASR_BOOK_ALIASES: AsrBookAlias[] = [
+    { alias: "palm", canonNumber: 19, requireVerse: false }, // Psalms
+    { alias: "palms", canonNumber: 19, requireVerse: false },
+    { alias: "genes", canonNumber: 1, requireVerse: false }, // Genesis, cut off mid word
+    { alias: "joan", canonNumber: 43, requireVerse: true }, // John
+    { alias: "jon", canonNumber: 43, requireVerse: true },
+    { alias: "axe", canonNumber: 44, requireVerse: true }, // Acts
+    { alias: "ask", canonNumber: 44, requireVerse: true },
+    { alias: "look", canonNumber: 42, requireVerse: true }, // Luke
+    { alias: "games", canonNumber: 59, requireVerse: true }, // James
+    { alias: "roof", canonNumber: 8, requireVerse: true }, // Ruth
+    { alias: "dude", canonNumber: 65, requireVerse: true }, // Jude
+    { alias: "juice", canonNumber: 65, requireVerse: true }
+]
 
 // SPOKEN NUMBERS
 
@@ -99,7 +127,7 @@ export function normalizeSpokenNumbers(text: string): string {
 
 interface BookIndex {
     regex: RegExp | null
-    byToken: Map<string, { name: string; number: number; chapterCount: number }>
+    byToken: Map<string, { name: string; number: number; chapterCount: number; requireVerse?: boolean }>
     bookPattern: string // alternation of all book name patterns ("" when no books)
 }
 
@@ -127,7 +155,8 @@ function escapeRegex(value: string): string {
 }
 
 function buildBookIndex(books: AiScriptureBook[]): BookIndex {
-    const byToken = new Map<string, { name: string; number: number; chapterCount: number }>()
+    const byToken = new Map<string, { name: string; number: number; chapterCount: number; requireVerse?: boolean }>()
+    const canonNames = new Map<number, string>()
     const tokens: string[] = []
 
     books.forEach((book) => {
@@ -140,6 +169,16 @@ function buildBookIndex(books: AiScriptureBook[]): BookIndex {
             byToken.set(token, { name: name.trim(), number: book.canonNumber ?? book.number, chapterCount })
             tokens.push(token)
         })
+        if (book.canonNumber && !canonNames.has(book.canonNumber)) canonNames.set(book.canonNumber, book.names[0]?.trim() || "")
+    })
+
+    // add the misheard forms, but only for books this bible actually has
+    ASR_BOOK_ALIASES.forEach((entry) => {
+        if (byToken.has(entry.alias)) return
+        const name = canonNames.get(entry.canonNumber)
+        if (!name) return
+        byToken.set(entry.alias, { name, number: entry.canonNumber, chapterCount: CANON_CHAPTER_COUNTS[entry.canonNumber] || 0, requireVerse: entry.requireVerse })
+        tokens.push(entry.alias)
     })
 
     // longest names first so "1 john" wins over "john"
@@ -211,7 +250,23 @@ function matchReferences(text: string, index: BookIndex): ReferenceMatch[] {
         // only a bare "bookname 15" ("he acts 15 years old") stays "medium" and waits for confirmation
         const confidence: "high" | "medium" | "low" = hasVerse || unglued || hasCue ? "high" : "medium"
 
-        results.push({ bookNumber: book.number, book: book.name, chapter, verseStart, verseEnd, confidence, quote })
+        // a misheard alias that is also an ordinary word needs a verse before it counts
+        if (book.requireVerse && !hasVerse) continue
+
+        // Bound the verse against the real length of the chapter, so a reference that
+        // cannot exist is never projected ("Genesis chapter 3 verse 50" - that chapter
+        // ends at 24). book.chapterCount is only set for a 66 book canon bible, so it
+        // doubles as the signal that book.number is a canon number and the table can be
+        // trusted. Anything else passes through and the existing confidence rules decide.
+        const chapterLength = book.chapterCount > 0 ? maxVerseInChapter(book.number, chapter) : 0
+        if (chapterLength > 0 && verseStart > 0 && !isValidChapterVerse(book.number, chapter, verseStart)) continue
+
+        // A range that overruns the chapter is clamped rather than dropped, because the
+        // start of it is a real verse.
+        let boundedEnd = verseEnd
+        if (chapterLength > 0 && boundedEnd > chapterLength) boundedEnd = Math.max(chapterLength, verseStart)
+
+        results.push({ bookNumber: book.number, book: book.name, chapter, verseStart, verseEnd: boundedEnd, confidence, quote })
     }
 
     return results
